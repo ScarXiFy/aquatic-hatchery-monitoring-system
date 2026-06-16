@@ -169,6 +169,12 @@ input:focus-visible {
   color: #67e8f9;
 }
 
+.status-rpi-disconnected {
+  border-color: rgba(239, 68, 68, 0.44);
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
 .status-warning {
   border-color: rgba(251, 191, 36, 0.44);
   background: rgba(251, 191, 36, 0.2);
@@ -576,6 +582,31 @@ h3 {
   background: rgba(55, 65, 81, 0.72);
   color: #5eead4;
   font-weight: 900;
+}
+
+input.threshold-input {
+  width: 92px;
+  outline: 0;
+}
+
+.threshold-save {
+  margin-left: 8px;
+  padding: 6px 9px;
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  border-radius: 8px;
+  background: rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.threshold-save:hover {
+  background: rgba(20, 184, 166, 0.3);
+}
+
+.threshold-error .threshold-input {
+  border-color: rgba(239, 68, 68, 0.75);
 }
 
 .graph-page {

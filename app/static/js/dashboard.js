@@ -4,6 +4,7 @@
   let thresholds = [];
   let latestReading = null;
   let dayHistory = [];
+  let socketBound = false;
   const controlState = {
     temperature_setpoint: 26,
     dissolved_oxygen_setpoint: 7.2,
@@ -97,6 +98,19 @@
     });
   }
 
+  function updateSocketStatus(isConnected) {
+    const status = document.getElementById("socket-status");
+    if (!status) {
+      return;
+    }
+
+    const label = status.querySelector("[data-socket-status-label]");
+    status.classList.toggle("status-rpi-disconnected", !isConnected);
+    if (label) {
+      label.textContent = isConnected ? status.dataset.connectedLabel : status.dataset.disconnectedLabel;
+    }
+  }
+
   function setBadgeState(element, state) {
     if (!element) {
       return;
@@ -165,6 +179,14 @@
     };
   }
 
+  function trimDayHistory() {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    dayHistory = dayHistory.filter((reading) => new Date(reading.timestamp).getTime() >= cutoff);
+    if (dayHistory.length > 240) {
+      dayHistory = dayHistory.slice(-240);
+    }
+  }
+
   function renderTrend(metric, stats) {
     const row = document.querySelector(`[data-trend-metric="${metric}"]`);
     const config = metrics[metric];
@@ -216,16 +238,20 @@
         const label = state === "critical" ? "Critical" : state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
         const stateClass = state === "critical" ? "status-critical" : state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : "";
         return `
-          <tr>
+          <tr data-threshold-row="${item.metric}">
             <td><strong>${config.label}</strong></td>
-            <td><span class="threshold-input">${formatValue(item.metric, item.min_value, false)}</span></td>
-            <td><span class="threshold-input">${formatValue(item.metric, item.max_value, false)}</span></td>
+            <td><input class="threshold-input" data-threshold-field="min_value" type="number" step="0.1" value="${formatValue(item.metric, item.min_value, false)}" aria-label="${config.label} minimum value"></td>
+            <td><input class="threshold-input" data-threshold-field="max_value" type="number" step="0.1" value="${formatValue(item.metric, item.max_value, false)}" aria-label="${config.label} maximum value"></td>
             <td>${config.unit}</td>
-            <td><span class="status-badge ${stateClass}">${label}</span></td>
+            <td>
+              <span class="status-badge ${stateClass}">${label}</span>
+              <button class="threshold-save" data-threshold-save="${item.metric}" type="button">Save</button>
+            </td>
           </tr>
         `;
       })
       .join("") || `<tr><td colspan="5">No pH or salinity thresholds available.</td></tr>`;
+    bindThresholdSaves();
   }
 
   async function loadThresholds() {
@@ -233,6 +259,7 @@
     const payload = await response.json();
     thresholds = payload.thresholds || [];
     renderThresholds();
+    window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
   }
 
   async function loadLatestReading() {
@@ -248,6 +275,52 @@
     const payload = await response.json();
     dayHistory = payload.readings || [];
     renderTrends();
+  }
+
+  async function saveThreshold(metric) {
+    const row = document.querySelector(`[data-threshold-row="${metric}"]`);
+    if (!row) {
+      return;
+    }
+
+    const minInput = row.querySelector('[data-threshold-field="min_value"]');
+    const maxInput = row.querySelector('[data-threshold-field="max_value"]');
+    const minValue = Number(minInput.value);
+    const maxValue = Number(maxInput.value);
+    if (Number.isNaN(minValue) || Number.isNaN(maxValue) || minValue >= maxValue) {
+      row.classList.add("threshold-error");
+      return;
+    }
+
+    row.classList.remove("threshold-error");
+    const response = await fetch("/api/thresholds", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        [metric]: {
+          min_value: minValue,
+          max_value: maxValue,
+        },
+      }),
+    });
+    if (!response.ok) {
+      row.classList.add("threshold-error");
+      return;
+    }
+
+    const payload = await response.json();
+    thresholds = payload.thresholds || [];
+    renderThresholds();
+    if (latestReading) {
+      updateGauges(latestReading);
+    }
+    window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+  }
+
+  function bindThresholdSaves() {
+    document.querySelectorAll("[data-threshold-save]").forEach((button) => {
+      button.addEventListener("click", () => saveThreshold(button.dataset.thresholdSave));
+    });
   }
 
   function sliderDisplay(slider) {
@@ -328,15 +401,25 @@
 
   function bindSocket() {
     if (typeof io !== "function") {
+      updateSocketStatus(false);
       return;
     }
-    const socket = io();
+
+    const socket = window.hatcherySocket || io();
+    window.hatcherySocket = socket;
+    if (socketBound) {
+      return;
+    }
+
+    socketBound = true;
+    socket.on("connect", () => updateSocketStatus(true));
+    socket.on("disconnect", () => updateSocketStatus(false));
+    socket.on("connect_error", () => updateSocketStatus(false));
+    updateSocketStatus(Boolean(socket.connected));
     socket.on("sensor_update", (reading) => {
       updateGauges(reading);
       dayHistory.push(reading);
-      if (dayHistory.length > 240) {
-        dayHistory.shift();
-      }
+      trimDayHistory();
       renderTrends();
       window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
     });
