@@ -5,6 +5,7 @@
   let latestReading = null;
   let dayHistory = [];
   let socketBound = false;
+  let trendRefreshTimeout = null;
   const controlState = {
     temperature_setpoint: 26,
     dissolved_oxygen_setpoint: 7.2,
@@ -164,7 +165,6 @@
   function updateGauges(reading) {
     latestReading = reading;
     Object.keys(metrics).forEach((metric) => updateGauge(metric, reading));
-    renderThresholds();
   }
 
   function metricStats(metric, readings) {
@@ -177,14 +177,6 @@
       min: Math.min(...values),
       max: Math.max(...values),
     };
-  }
-
-  function trimDayHistory() {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    dayHistory = dayHistory.filter((reading) => new Date(reading.timestamp).getTime() >= cutoff);
-    if (dayHistory.length > 240) {
-      dayHistory = dayHistory.slice(-240);
-    }
   }
 
   function renderTrend(metric, stats) {
@@ -275,6 +267,24 @@
     const payload = await response.json();
     dayHistory = payload.readings || [];
     renderTrends();
+  }
+
+  function millisecondsUntilNextMidnight() {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);
+    return nextMidnight.getTime() - now.getTime();
+  }
+
+  function scheduleMidnightTrendRefresh() {
+    if (trendRefreshTimeout) {
+      clearTimeout(trendRefreshTimeout);
+    }
+
+    trendRefreshTimeout = setTimeout(async () => {
+      await loadDayHistory();
+      scheduleMidnightTrendRefresh();
+    }, millisecondsUntilNextMidnight());
   }
 
   async function saveThreshold(metric) {
@@ -418,10 +428,9 @@
     updateSocketStatus(Boolean(socket.connected));
     socket.on("sensor_update", (reading) => {
       updateGauges(reading);
-      dayHistory.push(reading);
-      trimDayHistory();
-      renderTrends();
-      window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
+      if (document.querySelector('[data-page="graph"]')) {
+        window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
+      }
     });
   }
 
@@ -430,7 +439,7 @@
     setInterval(updateDateTime, 30000);
     bindControls();
     loadThresholds().then(loadLatestReading);
-    loadDayHistory();
+    loadDayHistory().then(scheduleMidnightTrendRefresh);
     bindSocket();
   });
 })();
