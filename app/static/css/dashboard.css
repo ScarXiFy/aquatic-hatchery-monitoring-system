@@ -622,6 +622,8 @@ h3 {
 }
 
 .chart-card {
+  display: grid;
+  grid-template-rows: auto 180px;
   min-height: 282px;
   padding: 18px 16px;
 }
@@ -667,9 +669,17 @@ h3 {
   opacity: 0.7;
 }
 
-.chart-card canvas {
+.chart-canvas-wrap {
+  position: relative;
   width: 100%;
-  min-height: 190px;
+  height: 180px;
+  min-height: 180px;
+}
+
+.chart-card canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 @media (max-width: 1180px) {
