@@ -152,6 +152,7 @@
       return;
     }
     body.innerHTML = thresholds
+      .filter((item) => item.metric === "ph" || item.metric === "salinity")
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
         const value = latestReading ? Number(latestReading[item.metric]) : null;
@@ -167,7 +168,7 @@
           </tr>
         `;
       })
-      .join("");
+      .join("") || `<tr><td colspan="5">No pH or salinity thresholds available.</td></tr>`;
   }
 
   async function loadThresholds() {
