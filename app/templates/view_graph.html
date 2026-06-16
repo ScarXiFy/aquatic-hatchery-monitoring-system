@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}View Graph | Aquatic Hatchery Monitoring System{% endblock %}
+
+{% block content %}
+<section class="graph-page" data-page="graph">
+  <header class="graph-toolbar">
+    <h1>Data Visualization</h1>
+    <div class="range-tabs" role="group" aria-label="Graph time range">
+      <button class="active" data-history-range="day" type="button">Day</button>
+      <button data-history-range="week" type="button">Week</button>
+    </div>
+  </header>
+
+  <div class="chart-grid">
+    <article class="glass-panel chart-card">
+      <div class="chart-card-header">
+        <div>
+          <h2>Temperature</h2>
+          <div class="chart-stats" data-chart-stats="temperature">
+            <span>Current: <strong data-stat="current">--</strong></span>
+            <span>Min: <strong data-stat="min">--</strong></span>
+            <span>Max: <strong data-stat="max">--</strong></span>
+          </div>
+        </div>
+        <div class="chart-actions" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      <canvas id="temperature-chart" data-chart="history" data-metric="temperature"></canvas>
+    </article>
+
+    <article class="glass-panel chart-card">
+      <div class="chart-card-header">
+        <div>
+          <h2>pH Level</h2>
+          <div class="chart-stats" data-chart-stats="ph">
+            <span>Current: <strong data-stat="current">--</strong></span>
+            <span>Min: <strong data-stat="min">--</strong></span>
+            <span>Max: <strong data-stat="max">--</strong></span>
+          </div>
+        </div>
+        <div class="chart-actions" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      <canvas id="ph-chart" data-chart="history" data-metric="ph"></canvas>
+    </article>
+
+    <article class="glass-panel chart-card">
+      <div class="chart-card-header">
+        <div>
+          <h2>Dissolved Oxygen</h2>
+          <div class="chart-stats" data-chart-stats="dissolved_oxygen">
+            <span>Current: <strong data-stat="current">--</strong></span>
+            <span>Min: <strong data-stat="min">--</strong></span>
+            <span>Max: <strong data-stat="max">--</strong></span>
+          </div>
+        </div>
+        <div class="chart-actions" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      <canvas id="dissolved-oxygen-chart" data-chart="history" data-metric="dissolved_oxygen"></canvas>
+    </article>
+
+    <article class="glass-panel chart-card">
+      <div class="chart-card-header">
+        <div>
+          <h2>Salinity</h2>
+          <div class="chart-stats" data-chart-stats="salinity">
+            <span>Current: <strong data-stat="current">--</strong></span>
+            <span>Min: <strong data-stat="min">--</strong></span>
+            <span>Max: <strong data-stat="max">--</strong></span>
+          </div>
+        </div>
+        <div class="chart-actions" aria-hidden="true">
+          <span></span>
+          <span></span>
+        </div>
+      </div>
+      <canvas id="salinity-chart" data-chart="history" data-metric="salinity"></canvas>
+    </article>
+  </div>
+</section>
+{% endblock %}
