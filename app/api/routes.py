@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from app.api.piUtils import sourceValveState, drainValveState
 
 from app.models import get_history, get_latest_reading, get_thresholds
 
@@ -42,8 +43,17 @@ def set_valve(name):
 
     payload = request.get_json(silent=True) or {}
     is_open = bool(payload.get("open", False))
-    CONTROL_STATE["valves"][name] = is_open
-    return jsonify({"name": name, "open": is_open})
+    # CONTROL_STATE["valves"][name] = is_open
+    # return jsonify({"name": name, "open": is_open})
+    
+    # isOpen = (state == 1)
+    if name == "source":
+        sourceValveState(is_open)
+    elif name == "drain":
+        drainValveState(is_open)
+    else:
+        return ("Unknown valve", 400)
+    return ("", 204)
 
 
 @api_bp.post("/controls/sliders")
