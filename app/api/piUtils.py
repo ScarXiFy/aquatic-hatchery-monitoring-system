@@ -1,3 +1,4 @@
+# TEMPORARY PIN PLACEMENTS
 sourceValvePin = 18
 drainValvePin = 16
 
@@ -36,20 +37,14 @@ if isRpiPresent:
         sourceValveOpen = isValveOpen
 
         print(f"[RPI] source valve -> {sourceValveOpen}")
-        GPIO.output(
-            sourceValvePin,
-            GPIO.HIGH if sourceValveOpen else GPIO.LOW
-        )
+        GPIO.output(sourceValvePin, GPIO.HIGH if sourceValveOpen else GPIO.LOW)
 
     def setDrainValveState(isValveOpen: bool):
         global drainValveOpen
         drainValveOpen = isValveOpen
 
         print(f"[RPI] drain valve -> {drainValveOpen}")
-        GPIO.output(
-            drainValvePin,
-            GPIO.HIGH if drainValveOpen else GPIO.LOW
-        )
+        GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
 
     # override dummy functions
     sourceValveState = setSourceValveState
