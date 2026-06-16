@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block title %}Home | Aquatic Hatchery Monitoring System{% endblock %}
+
+{% block content %}
+<section class="dashboard-grid" data-page="home">
+  <div class="dashboard-left">
+    <section class="glass-panel live-panel" aria-labelledby="live-readings-title">
+      <h1 id="live-readings-title">Live Sensor Readings</h1>
+
+      <div class="gauge-grid">
+        <article class="gauge-card" data-metric-card="temperature">
+          <div class="circular-gauge" data-gauge="temperature" style="--gauge-progress: 0deg; --gauge-color: #10b981;">
+            <div class="gauge-center">
+              <strong id="temperature-value">--</strong>
+              <span>&deg;C</span>
+            </div>
+          </div>
+          <h2>Temperature</h2>
+          <span id="temperature-status" class="status-badge status-neutral">Waiting</span>
+        </article>
+
+        <article class="gauge-card" data-metric-card="dissolved_oxygen">
+          <div class="circular-gauge" data-gauge="dissolved_oxygen" style="--gauge-progress: 0deg; --gauge-color: #10b981;">
+            <div class="gauge-center">
+              <strong id="dissolved_oxygen-value">--</strong>
+              <span>mg/L</span>
+            </div>
+          </div>
+          <h2>Dissolved Oxygen</h2>
+          <span id="dissolved_oxygen-status" class="status-badge status-neutral">Waiting</span>
+        </article>
+
+        <article class="gauge-card" data-metric-card="salinity">
+          <div class="circular-gauge" data-gauge="salinity" style="--gauge-progress: 0deg; --gauge-color: #10b981;">
+            <div class="gauge-center">
+              <strong id="salinity-value">--</strong>
+              <span>g/L</span>
+            </div>
+          </div>
+          <h2>Salinity</h2>
+          <span id="salinity-status" class="status-badge status-neutral">Waiting</span>
+        </article>
+
+        <article class="gauge-card" data-metric-card="ph">
+          <div class="circular-gauge" data-gauge="ph" style="--gauge-progress: 0deg; --gauge-color: #10b981;">
+            <div class="gauge-center">
+              <strong id="ph-value">--</strong>
+              <span>pH</span>
+            </div>
+          </div>
+          <h2>pH Level</h2>
+          <span id="ph-status" class="status-badge status-neutral">Waiting</span>
+        </article>
+      </div>
+    </section>
+
+    <div class="control-grid">
+      <section class="glass-panel controls-panel" aria-labelledby="controls-title">
+        <h2 id="controls-title">System Controls</h2>
+
+        <label class="control-row">
+          <span>Temperature</span>
+          <output id="temperature_setpoint-output">26&deg;C</output>
+          <input data-control-slider="temperature_setpoint" type="range" min="15" max="35" value="26" step="1">
+          <small>15&deg;C</small>
+          <small>35&deg;C</small>
+        </label>
+
+        <label class="control-row">
+          <span>Dissolved Oxygen</span>
+          <output id="dissolved_oxygen_setpoint-output">7.2 mg/L</output>
+          <input data-control-slider="dissolved_oxygen_setpoint" type="range" min="0" max="15" value="7.2" step="0.1">
+          <small>0 mg/L</small>
+          <small>15 mg/L</small>
+        </label>
+
+        <label class="control-row">
+          <span>LED Light Intensity</span>
+          <output id="led_intensity-output">1000 lx</output>
+          <input data-control-slider="led_intensity" type="range" min="0" max="4" value="3" step="1" data-fixed-values="0,100,500,1000,3000">
+          <small>0 lx</small>
+          <small>3000 lx</small>
+        </label>
+      </section>
+
+      <section class="glass-panel valves-panel" aria-labelledby="valves-title">
+        <h2 id="valves-title">Control Valves</h2>
+
+        <button class="valve-card" data-valve="source" aria-pressed="true" type="button">
+          <span>Water Source Pipe</span>
+          <strong><i></i> Open</strong>
+        </button>
+
+        <button class="valve-card" data-valve="drain" aria-pressed="false" type="button">
+          <span>Drainage Pipe</span>
+          <strong><i></i> Closed</strong>
+        </button>
+      </section>
+    </div>
+  </div>
+
+  <aside class="dashboard-right">
+    <section class="glass-panel trends-panel" aria-labelledby="trends-title">
+      <h2 id="trends-title">Trends (Last 24h)</h2>
+      <div class="trend-list" aria-live="polite">
+        <div class="trend-row" data-trend-metric="temperature"></div>
+        <div class="trend-row" data-trend-metric="dissolved_oxygen"></div>
+        <div class="trend-row" data-trend-metric="salinity"></div>
+        <div class="trend-row" data-trend-metric="ph"></div>
+      </div>
+    </section>
+
+    <section class="glass-panel thresholds-panel" aria-labelledby="thresholds-title">
+      <h2 id="thresholds-title">Thresholds</h2>
+      <div class="table-scroll">
+        <table class="threshold-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Min</th>
+              <th>Max</th>
+              <th>Unit</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="threshold-table-body">
+            <tr>
+              <td colspan="5">Loading thresholds...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </aside>
+</section>
+{% endblock %}
