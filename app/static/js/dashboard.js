@@ -4,6 +4,22 @@
   let thresholds = [];
   let latestReading = null;
   let dayHistory = [];
+  const controlState = {
+    temperature_setpoint: 26,
+    dissolved_oxygen_setpoint: 7.2,
+    led_intensity: 1000,
+  };
+
+  const regulatedThresholds = {
+    temperature: {
+      control: "temperature_setpoint",
+      tolerance: 2,
+    },
+    dissolved_oxygen: {
+      control: "dissolved_oxygen_setpoint",
+      tolerance: 1,
+    },
+  };
 
   function formatValue(metric, value, includeUnit = true) {
     const config = metrics[metric];
@@ -14,16 +30,55 @@
     return includeUnit && config.unit ? `${formatted} ${config.unit}` : formatted;
   }
 
-  function thresholdFor(metric) {
-    return thresholds.find((item) => item.metric === metric);
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
   }
 
-  function statusFor(metric, value) {
+  function controlThresholdFor(metric) {
+    const rule = regulatedThresholds[metric];
+    if (!rule) {
+      return null;
+    }
+
+    const slider = document.querySelector(`[data-control-slider="${rule.control}"]`);
+    const config = metrics[metric];
+    const setpoint = Number(controlState[rule.control]);
+    const min = slider ? Number(slider.min) : config.min;
+    const max = slider ? Number(slider.max) : config.max;
+
+    return {
+      metric,
+      min_value: clamp(setpoint - rule.tolerance, min, max),
+      max_value: clamp(setpoint + rule.tolerance, min, max),
+    };
+  }
+
+  function thresholdFor(metric) {
+    return controlThresholdFor(metric) || thresholds.find((item) => item.metric === metric);
+  }
+
+  function conditionFor(metric, value) {
     const threshold = thresholdFor(metric);
     if (!threshold || value === null || value === undefined || Number.isNaN(Number(value))) {
       return "neutral";
     }
-    return value < threshold.min_value || value > threshold.max_value ? "warning" : "optimal";
+
+    const numericValue = Number(value);
+    const min = Number(threshold.min_value);
+    const max = Number(threshold.max_value);
+    if (numericValue < min || numericValue > max) {
+      return "critical";
+    }
+
+    const range = max - min;
+    if (range <= 0) {
+      return numericValue === min ? "optimal" : "critical";
+    }
+
+    const warningSize = range * 0.2;
+    const inLowerWarningZone = numericValue >= min && numericValue <= min + warningSize;
+    const inUpperWarningZone = numericValue <= max && numericValue >= max - warningSize;
+    return inLowerWarningZone || inUpperWarningZone ? "warning" : "optimal";
   }
 
   function updateDateTime() {
@@ -84,11 +139,12 @@
     }
 
     const value = Number(reading[metric]);
-    const state = statusFor(metric, value);
+    const state = conditionFor(metric, value);
     valueElement.textContent = formatValue(metric, value, false);
     setBadgeState(statusElement, state);
     gaugeElement.style.setProperty("--gauge-progress", `${gaugeDegrees(metric, value)}deg`);
-    gaugeElement.style.setProperty("--gauge-color", state === "warning" ? "#fbbf24" : "#10b981");
+    const gaugeColor = state === "critical" ? "#ef4444" : state === "warning" ? "#fbbf24" : "#10b981";
+    gaugeElement.style.setProperty("--gauge-color", gaugeColor);
   }
 
   function updateGauges(reading) {
@@ -156,15 +212,16 @@
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
         const value = latestReading ? Number(latestReading[item.metric]) : null;
-        const state = statusFor(item.metric, value);
-        const label = state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
+        const state = conditionFor(item.metric, value);
+        const label = state === "critical" ? "Critical" : state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
+        const stateClass = state === "critical" ? "status-critical" : state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : "";
         return `
           <tr>
             <td><strong>${config.label}</strong></td>
-            <td><span class="threshold-input">${item.min_value}</span></td>
-            <td><span class="threshold-input">${item.max_value}</span></td>
+            <td><span class="threshold-input">${formatValue(item.metric, item.min_value, false)}</span></td>
+            <td><span class="threshold-input">${formatValue(item.metric, item.max_value, false)}</span></td>
             <td>${config.unit}</td>
-            <td><span class="status-badge ${state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : ""}">${label}</span></td>
+            <td><span class="status-badge ${stateClass}">${label}</span></td>
           </tr>
         `;
       })
@@ -214,6 +271,10 @@
     return Number(slider.value);
   }
 
+  function updateControlState(slider) {
+    controlState[slider.dataset.controlSlider] = sliderPayloadValue(slider);
+  }
+
   function updateSliderOutput(slider) {
     const output = document.getElementById(`${slider.dataset.controlSlider}-output`);
     if (output) {
@@ -224,6 +285,7 @@
   async function postSliderState() {
     const payload = {};
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
+      updateControlState(slider);
       payload[slider.dataset.controlSlider] = sliderPayloadValue(slider);
     });
     await fetch("/api/controls/sliders", {
@@ -235,8 +297,15 @@
 
   function bindControls() {
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
+      updateControlState(slider);
       updateSliderOutput(slider);
-      slider.addEventListener("input", () => updateSliderOutput(slider));
+      slider.addEventListener("input", () => {
+        updateControlState(slider);
+        updateSliderOutput(slider);
+        if (latestReading) {
+          updateGauges(latestReading);
+        }
+      });
       slider.addEventListener("change", postSliderState);
     });
 
@@ -252,7 +321,7 @@
           return;
         }
         button.setAttribute("aria-pressed", String(nextState));
-        button.querySelector("strong").innerHTML = `<i></i> ${nextState ? "Open" : "Closed"}`;
+        button.innerHTML = `<i></i> ${nextState ? "Open" : "Closed"}`;
       });
     });
   }

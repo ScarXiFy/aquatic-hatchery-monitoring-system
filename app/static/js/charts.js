@@ -16,7 +16,7 @@
       color: "#8b5cf6",
       min: 0,
       max: 14,
-      decimals: 1,
+      decimals: 0,
     },
     dissolved_oxygen: {
       label: "Dissolved Oxygen",
