@@ -6,13 +6,13 @@ api_bp = Blueprint("api", __name__)
 
 CONTROL_STATE = {
     "valves": {
-        "source": False,
+        "source": True,
         "drain": False,
     },
     "sliders": {
-        "water_flow": 55,
-        "aeration": 70,
-        "feeding": 40,
+        "temperature_setpoint": 26,
+        "dissolved_oxygen_setpoint": 7.2,
+        "led_intensity": 1000,
     },
 }
 
@@ -51,5 +51,5 @@ def set_sliders():
     payload = request.get_json(silent=True) or {}
     for key in CONTROL_STATE["sliders"]:
         if key in payload:
-            CONTROL_STATE["sliders"][key] = int(payload[key])
+            CONTROL_STATE["sliders"][key] = float(payload[key])
     return jsonify({"sliders": CONTROL_STATE["sliders"]})

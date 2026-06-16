@@ -3,10 +3,10 @@
 {% block title %}View Graph | Aquatic Hatchery Monitoring System{% endblock %}
 
 {% block content %}
-<header class="page-header">
+<header class="graph-header">
   <div>
-    <p class="eyebrow">Historical water quality</p>
-    <h1>View Graph</h1>
+    <h1>Data Visualization</h1>
+    <p>Graphs use logged sensor readings from the local database to help users observe parameter stability and historical trends.</p>
   </div>
   <div class="segmented-control" role="group" aria-label="Chart range">
     <button class="active" data-history-range="day">Day</button>
@@ -16,32 +16,48 @@
 
 <section class="graph-grid">
   <article class="panel chart-panel">
-    <div class="panel-header">
+    <div class="chart-heading">
       <h2>Temperature</h2>
-      <p>Celsius</p>
+      <div class="chart-stats" data-chart-stats="temperature">
+        <span>Current: <strong data-stat="current">--</strong></span>
+        <span>Min: <strong data-stat="min">--</strong></span>
+        <span>Max: <strong data-stat="max">--</strong></span>
+      </div>
     </div>
     <canvas id="temperature-full-chart" data-chart="full" data-metric="temperature"></canvas>
   </article>
   <article class="panel chart-panel">
-    <div class="panel-header">
+    <div class="chart-heading">
+      <h2>pH Level</h2>
+      <div class="chart-stats" data-chart-stats="ph">
+        <span>Current: <strong data-stat="current">--</strong></span>
+        <span>Min: <strong data-stat="min">--</strong></span>
+        <span>Max: <strong data-stat="max">--</strong></span>
+      </div>
+    </div>
+    <canvas id="ph-full-chart" data-chart="full" data-metric="ph"></canvas>
+  </article>
+  <article class="panel chart-panel">
+    <div class="chart-heading">
       <h2>Dissolved Oxygen</h2>
-      <p>mg/L</p>
+      <div class="chart-stats" data-chart-stats="dissolved_oxygen">
+        <span>Current: <strong data-stat="current">--</strong></span>
+        <span>Min: <strong data-stat="min">--</strong></span>
+        <span>Max: <strong data-stat="max">--</strong></span>
+      </div>
     </div>
     <canvas id="dissolved_oxygen-full-chart" data-chart="full" data-metric="dissolved_oxygen"></canvas>
   </article>
   <article class="panel chart-panel">
-    <div class="panel-header">
+    <div class="chart-heading">
       <h2>Salinity</h2>
-      <p>ppt</p>
+      <div class="chart-stats" data-chart-stats="salinity">
+        <span>Current: <strong data-stat="current">--</strong></span>
+        <span>Min: <strong data-stat="min">--</strong></span>
+        <span>Max: <strong data-stat="max">--</strong></span>
+      </div>
     </div>
     <canvas id="salinity-full-chart" data-chart="full" data-metric="salinity"></canvas>
-  </article>
-  <article class="panel chart-panel">
-    <div class="panel-header">
-      <h2>pH</h2>
-      <p>Acidity</p>
-    </div>
-    <canvas id="ph-full-chart" data-chart="full" data-metric="ph"></canvas>
   </article>
 </section>
 {% endblock %}

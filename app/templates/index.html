@@ -3,108 +3,136 @@
 {% block title %}Home | Aquatic Hatchery Monitoring System{% endblock %}
 
 {% block content %}
-<header class="page-header">
-  <div>
-    <p class="eyebrow">Live hatchery conditions</p>
-    <h1>Home Dashboard</h1>
-  </div>
-  <div class="status-pill">
-    <span></span>
-    Simulator Online
-  </div>
-</header>
+<div class="home-layout">
+  <div class="home-main">
+    <section class="panel sensor-panel" aria-label="Live sensor readings">
+      <div class="panel-header">
+        <h1>Live Sensor Readings</h1>
+      </div>
+      <div class="gauge-grid">
+        <article class="gauge-card" data-metric-card="temperature">
+          <div class="gauge" style="--gauge-progress: 0deg; --gauge-color: var(--green);">
+            <div class="gauge-value">
+              <strong><span id="temperature-value">--</span></strong>
+              <em>°C</em>
+            </div>
+          </div>
+          <h2>Temperature</h2>
+          <span id="temperature-status" class="metric-status status-badge neutral">Waiting</span>
+        </article>
 
-<section class="metric-grid" aria-label="Live sensor readings">
-  <article class="metric-card" data-metric-card="temperature">
-    <small>Temperature</small>
-    <strong><span id="temperature-value">--</span><em> C</em></strong>
-    <p id="temperature-status">Waiting for data</p>
-  </article>
-  <article class="metric-card" data-metric-card="dissolved_oxygen">
-    <small>Dissolved Oxygen</small>
-    <strong><span id="dissolved_oxygen-value">--</span><em> mg/L</em></strong>
-    <p id="dissolved_oxygen-status">Waiting for data</p>
-  </article>
-  <article class="metric-card" data-metric-card="salinity">
-    <small>Salinity</small>
-    <strong><span id="salinity-value">--</span><em> ppt</em></strong>
-    <p id="salinity-status">Waiting for data</p>
-  </article>
-  <article class="metric-card" data-metric-card="ph">
-    <small>pH</small>
-    <strong><span id="ph-value">--</span><em></em></strong>
-    <p id="ph-status">Waiting for data</p>
-  </article>
-</section>
+        <article class="gauge-card" data-metric-card="dissolved_oxygen">
+          <div class="gauge" style="--gauge-progress: 0deg; --gauge-color: var(--green);">
+            <div class="gauge-value">
+              <strong><span id="dissolved_oxygen-value">--</span></strong>
+              <em>mg/L</em>
+            </div>
+          </div>
+          <h2>Dissolved Oxygen</h2>
+          <span id="dissolved_oxygen-status" class="metric-status status-badge neutral">Waiting</span>
+        </article>
 
-<section class="dashboard-grid">
-  <div class="panel controls-panel">
-    <div class="panel-header">
-      <h2>System Controls</h2>
-      <p>Adjust simulated hatchery actuators</p>
-    </div>
-    <label class="slider-row">
-      <span>Water Flow</span>
-      <input data-control-slider="water_flow" type="range" min="0" max="100" value="55">
-      <output id="water_flow-output">55%</output>
-    </label>
-    <label class="slider-row">
-      <span>Aeration</span>
-      <input data-control-slider="aeration" type="range" min="0" max="100" value="70">
-      <output id="aeration-output">70%</output>
-    </label>
-    <label class="slider-row">
-      <span>Feeding</span>
-      <input data-control-slider="feeding" type="range" min="0" max="100" value="40">
-      <output id="feeding-output">40%</output>
-    </label>
+        <article class="gauge-card" data-metric-card="salinity">
+          <div class="gauge" style="--gauge-progress: 0deg; --gauge-color: var(--green);">
+            <div class="gauge-value">
+              <strong><span id="salinity-value">--</span></strong>
+              <em>g/L</em>
+            </div>
+          </div>
+          <h2>Salinity</h2>
+          <span id="salinity-status" class="metric-status status-badge neutral">Waiting</span>
+        </article>
+
+        <article class="gauge-card" data-metric-card="ph">
+          <div class="gauge" style="--gauge-progress: 0deg; --gauge-color: var(--green);">
+            <div class="gauge-value">
+              <strong><span id="ph-value">--</span></strong>
+              <em></em>
+            </div>
+          </div>
+          <h2>pH Level</h2>
+          <span id="ph-status" class="metric-status status-badge neutral">Waiting</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="lower-grid">
+      <div class="panel controls-panel">
+        <div class="panel-header">
+          <h2>System Controls</h2>
+        </div>
+        <label class="slider-row">
+          <span>Temperature Setpoint</span>
+          <output id="temperature_setpoint-output">26°C</output>
+          <input data-control-slider="temperature_setpoint" type="range" min="15" max="35" value="26" step="1">
+          <small>15°C</small>
+          <small>35°C</small>
+        </label>
+        <label class="slider-row">
+          <span>Dissolved Oxygen Setpoint</span>
+          <output id="dissolved_oxygen_setpoint-output">7.2 mg/L</output>
+          <input data-control-slider="dissolved_oxygen_setpoint" type="range" min="0" max="15" value="7.2" step="0.1">
+          <small>0 mg/L</small>
+          <small>15 mg/L</small>
+        </label>
+        <label class="slider-row">
+          <span>LED Light Intensity</span>
+          <output id="led_intensity-output">1000 lx</output>
+          <input data-control-slider="led_intensity" type="range" min="0" max="4" value="3" step="1" data-fixed-values="0,100,500,1000,3000">
+          <small>0 lx</small>
+          <small>3000 lx</small>
+        </label>
+        <p class="control-note">Temperature and dissolved oxygen support automated regulation. pH and salinity are monitored and displayed as threshold-based alerts.</p>
+      </div>
+
+      <div class="panel valve-panel">
+        <div class="panel-header">
+          <h2>Control Valves</h2>
+        </div>
+        <button class="valve-toggle" data-valve="source" aria-pressed="true">
+          <span>Water Source Pipe</span>
+          <strong><i></i> Open</strong>
+        </button>
+        <button class="valve-toggle" data-valve="drain" aria-pressed="false">
+          <span>Drainage Pipe</span>
+          <strong><i></i> Closed</strong>
+        </button>
+      </div>
+    </section>
   </div>
 
-  <div class="panel valve-panel">
-    <div class="panel-header">
-      <h2>Valve Control</h2>
-      <p>Manual source and drain toggles</p>
-    </div>
-    <button class="valve-toggle" data-valve="source" aria-pressed="false">
-      <span>Source Valve</span>
-      <strong>Closed</strong>
-    </button>
-    <button class="valve-toggle" data-valve="drain" aria-pressed="false">
-      <span>Drain Valve</span>
-      <strong>Closed</strong>
-    </button>
-  </div>
-</section>
+  <aside class="home-side">
+    <section class="panel trend-panel">
+      <div class="panel-header">
+        <h2>Trends (Last 24h)</h2>
+      </div>
+      <div id="trend-summary" class="trend-summary" aria-live="polite">
+        <div class="trend-row" data-trend-metric="temperature"></div>
+        <div class="trend-row" data-trend-metric="dissolved_oxygen"></div>
+        <div class="trend-row" data-trend-metric="salinity"></div>
+        <div class="trend-row" data-trend-metric="ph"></div>
+      </div>
+    </section>
 
-<section class="dashboard-grid wide">
-  <div class="panel">
-    <div class="panel-header">
-      <h2>24h Trends</h2>
-      <p>Live mini-charts update from SocketIO</p>
-    </div>
-    <div class="mini-chart-grid">
-      <canvas id="temperature-mini-chart" data-chart="mini" data-metric="temperature"></canvas>
-      <canvas id="dissolved_oxygen-mini-chart" data-chart="mini" data-metric="dissolved_oxygen"></canvas>
-      <canvas id="salinity-mini-chart" data-chart="mini" data-metric="salinity"></canvas>
-      <canvas id="ph-mini-chart" data-chart="mini" data-metric="ph"></canvas>
-    </div>
-  </div>
-
-  <div class="panel">
+    <section class="panel threshold-panel">
     <div class="panel-header">
       <h2>Thresholds</h2>
-      <p>Alert bands for hatchery water quality</p>
     </div>
-    <table class="threshold-table">
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th>Minimum</th>
-          <th>Maximum</th>
-        </tr>
-      </thead>
-      <tbody id="threshold-table-body"></tbody>
-    </table>
-  </div>
-</section>
+      <div class="table-wrap">
+        <table class="threshold-table">
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th>Min</th>
+              <th>Max</th>
+              <th>Unit</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="threshold-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </aside>
+</div>
 {% endblock %}
