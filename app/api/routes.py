@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from app.api.piUtils import sourceValveState, drainValveState
 
-from app.models import get_history, get_latest_reading, get_thresholds
+from app.models import get_history, get_latest_reading, get_thresholds, update_thresholds
 
 api_bp = Blueprint("api", __name__)
 
@@ -34,6 +34,38 @@ def readings_history():
 @api_bp.get("/thresholds")
 def thresholds():
     return jsonify({"thresholds": get_thresholds()})
+
+
+@api_bp.put("/thresholds")
+def save_thresholds():
+    payload = request.get_json(silent=True) or {}
+    allowed_metrics = {"ph", "salinity"}
+    updates = {}
+
+    for metric in allowed_metrics:
+        if metric not in payload:
+            continue
+
+        limits = payload[metric] or {}
+        try:
+            min_value = float(limits["min_value"])
+            max_value = float(limits["max_value"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": f"{metric} thresholds require numeric min_value and max_value"}), 400
+
+        if min_value >= max_value:
+            return jsonify({"error": f"{metric} min_value must be less than max_value"}), 400
+
+        updates[metric] = {"min_value": min_value, "max_value": max_value}
+
+    unknown_metrics = set(payload) - allowed_metrics
+    if unknown_metrics:
+        return jsonify({"error": "only ph and salinity thresholds can be updated"}), 400
+
+    if not updates:
+        return jsonify({"error": "no threshold updates provided"}), 400
+
+    return jsonify({"thresholds": update_thresholds(updates)})
 
 
 @api_bp.post("/controls/valves/<string:name>")
