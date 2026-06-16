@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}View Graph | Aquatic Hatchery Monitoring System{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Historical water quality</p>
+    <h1>View Graph</h1>
+  </div>
+  <div class="segmented-control" role="group" aria-label="Chart range">
+    <button class="active" data-history-range="day">Day</button>
+    <button data-history-range="week">Week</button>
+  </div>
+</header>
+
+<section class="graph-grid">
+  <article class="panel chart-panel">
+    <div class="panel-header">
+      <h2>Temperature</h2>
+      <p>Celsius</p>
+    </div>
+    <canvas id="temperature-full-chart" data-chart="full" data-metric="temperature"></canvas>
+  </article>
+  <article class="panel chart-panel">
+    <div class="panel-header">
+      <h2>Dissolved Oxygen</h2>
+      <p>mg/L</p>
+    </div>
+    <canvas id="dissolved_oxygen-full-chart" data-chart="full" data-metric="dissolved_oxygen"></canvas>
+  </article>
+  <article class="panel chart-panel">
+    <div class="panel-header">
+      <h2>Salinity</h2>
+      <p>ppt</p>
+    </div>
+    <canvas id="salinity-full-chart" data-chart="full" data-metric="salinity"></canvas>
+  </article>
+  <article class="panel chart-panel">
+    <div class="panel-header">
+      <h2>pH</h2>
+      <p>Acidity</p>
+    </div>
+    <canvas id="ph-full-chart" data-chart="full" data-metric="ph"></canvas>
+  </article>
+</section>
+{% endblock %}

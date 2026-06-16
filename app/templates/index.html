@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Home | Aquatic Hatchery Monitoring System{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Live hatchery conditions</p>
+    <h1>Home Dashboard</h1>
+  </div>
+  <div class="status-pill">
+    <span></span>
+    Simulator Online
+  </div>
+</header>
+
+<section class="metric-grid" aria-label="Live sensor readings">
+  <article class="metric-card" data-metric-card="temperature">
+    <small>Temperature</small>
+    <strong><span id="temperature-value">--</span><em> C</em></strong>
+    <p id="temperature-status">Waiting for data</p>
+  </article>
+  <article class="metric-card" data-metric-card="dissolved_oxygen">
+    <small>Dissolved Oxygen</small>
+    <strong><span id="dissolved_oxygen-value">--</span><em> mg/L</em></strong>
+    <p id="dissolved_oxygen-status">Waiting for data</p>
+  </article>
+  <article class="metric-card" data-metric-card="salinity">
+    <small>Salinity</small>
+    <strong><span id="salinity-value">--</span><em> ppt</em></strong>
+    <p id="salinity-status">Waiting for data</p>
+  </article>
+  <article class="metric-card" data-metric-card="ph">
+    <small>pH</small>
+    <strong><span id="ph-value">--</span><em></em></strong>
+    <p id="ph-status">Waiting for data</p>
+  </article>
+</section>
+
+<section class="dashboard-grid">
+  <div class="panel controls-panel">
+    <div class="panel-header">
+      <h2>System Controls</h2>
+      <p>Adjust simulated hatchery actuators</p>
+    </div>
+    <label class="slider-row">
+      <span>Water Flow</span>
+      <input data-control-slider="water_flow" type="range" min="0" max="100" value="55">
+      <output id="water_flow-output">55%</output>
+    </label>
+    <label class="slider-row">
+      <span>Aeration</span>
+      <input data-control-slider="aeration" type="range" min="0" max="100" value="70">
+      <output id="aeration-output">70%</output>
+    </label>
+    <label class="slider-row">
+      <span>Feeding</span>
+      <input data-control-slider="feeding" type="range" min="0" max="100" value="40">
+      <output id="feeding-output">40%</output>
+    </label>
+  </div>
+
+  <div class="panel valve-panel">
+    <div class="panel-header">
+      <h2>Valve Control</h2>
+      <p>Manual source and drain toggles</p>
+    </div>
+    <button class="valve-toggle" data-valve="source" aria-pressed="false">
+      <span>Source Valve</span>
+      <strong>Closed</strong>
+    </button>
+    <button class="valve-toggle" data-valve="drain" aria-pressed="false">
+      <span>Drain Valve</span>
+      <strong>Closed</strong>
+    </button>
+  </div>
+</section>
+
+<section class="dashboard-grid wide">
+  <div class="panel">
+    <div class="panel-header">
+      <h2>24h Trends</h2>
+      <p>Live mini-charts update from SocketIO</p>
+    </div>
+    <div class="mini-chart-grid">
+      <canvas id="temperature-mini-chart" data-chart="mini" data-metric="temperature"></canvas>
+      <canvas id="dissolved_oxygen-mini-chart" data-chart="mini" data-metric="dissolved_oxygen"></canvas>
+      <canvas id="salinity-mini-chart" data-chart="mini" data-metric="salinity"></canvas>
+      <canvas id="ph-mini-chart" data-chart="mini" data-metric="ph"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <h2>Thresholds</h2>
+      <p>Alert bands for hatchery water quality</p>
+    </div>
+    <table class="threshold-table">
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th>Minimum</th>
+          <th>Maximum</th>
+        </tr>
+      </thead>
+      <tbody id="threshold-table-body"></tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
