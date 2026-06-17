@@ -140,8 +140,17 @@
     if (!config) {
       return 0;
     }
-    const ratio = (value - config.min) / (config.max - config.min);
-    return Math.max(0, Math.min(180, ratio * 180));
+
+    const threshold = thresholdFor(metric);
+    const min = threshold ? Number(threshold.min_value) : Number(config.min);
+    const max = threshold ? Number(threshold.max_value) : Number(config.max);
+    const numericValue = Number(value);
+    if (Number.isNaN(numericValue) || Number.isNaN(min) || Number.isNaN(max) || max <= min) {
+      return 0;
+    }
+
+    const ratio = (numericValue - min) / (max - min);
+    return clamp(ratio, 0, 1) * 180;
   }
 
   function updateGauge(metric, reading) {

@@ -18,6 +18,7 @@
   --red: #ef4444;
   --purple: #8b5cf6;
   --orange: #f59e0b;
+  --gauge-track: rgba(75, 85, 99, 0.62);
   --radius-xl: 16px;
   --shadow-panel: 0 24px 70px rgba(0, 0, 0, 0.28);
 }
@@ -305,7 +306,8 @@ h3 {
   filter: drop-shadow(0 0 10px color-mix(in srgb, var(--gauge-color) 28%, transparent));
   background:
     radial-gradient(circle at center, rgba(31, 41, 55, 0.92) 0 60%, transparent 61%),
-    conic-gradient(from 270deg, var(--gauge-color) 0 var(--gauge-progress), transparent var(--gauge-progress) 180deg, transparent 360deg);
+    conic-gradient(from 270deg, var(--gauge-color) 0 var(--gauge-progress), transparent var(--gauge-progress) 180deg, transparent 360deg),
+    conic-gradient(from 270deg, var(--gauge-track) 0 180deg, transparent 180deg 360deg);
 }
 
 .circular-gauge::before {
