@@ -87,15 +87,19 @@
       <section class="glass-panel valves-panel" aria-labelledby="valves-title">
         <h2 id="valves-title">Control Valves</h2>
 
-        <button class="valve-card" data-valve="source" aria-pressed="true" type="button">
+        <div class="valve-card">
           <span>Water Source Pipe</span>
-          <strong><i></i> Open</strong>
-        </button>
+          <button class="valve-toggle" data-valve="source" aria-pressed="true" type="button">
+            <i></i> Open
+          </button>
+        </div>
 
-        <button class="valve-card" data-valve="drain" aria-pressed="false" type="button">
+        <div class="valve-card">
           <span>Drainage Pipe</span>
-          <strong><i></i> Closed</strong>
-        </button>
+          <button class="valve-toggle" data-valve="drain" aria-pressed="false" type="button">
+            <i></i> Closed
+          </button>
+        </div>
       </section>
     </div>
   </div>

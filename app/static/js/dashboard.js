@@ -4,6 +4,24 @@
   let thresholds = [];
   let latestReading = null;
   let dayHistory = [];
+  let socketBound = false;
+  let trendRefreshTimeout = null;
+  const controlState = {
+    temperature_setpoint: 26,
+    dissolved_oxygen_setpoint: 7.2,
+    led_intensity: 1000,
+  };
+
+  const regulatedThresholds = {
+    temperature: {
+      control: "temperature_setpoint",
+      tolerance: 2,
+    },
+    dissolved_oxygen: {
+      control: "dissolved_oxygen_setpoint",
+      tolerance: 1,
+    },
+  };
 
   function formatValue(metric, value, includeUnit = true) {
     const config = metrics[metric];
@@ -14,16 +32,55 @@
     return includeUnit && config.unit ? `${formatted} ${config.unit}` : formatted;
   }
 
-  function thresholdFor(metric) {
-    return thresholds.find((item) => item.metric === metric);
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
   }
 
-  function statusFor(metric, value) {
+  function controlThresholdFor(metric) {
+    const rule = regulatedThresholds[metric];
+    if (!rule) {
+      return null;
+    }
+
+    const slider = document.querySelector(`[data-control-slider="${rule.control}"]`);
+    const config = metrics[metric];
+    const setpoint = Number(controlState[rule.control]);
+    const min = slider ? Number(slider.min) : config.min;
+    const max = slider ? Number(slider.max) : config.max;
+
+    return {
+      metric,
+      min_value: clamp(setpoint - rule.tolerance, min, max),
+      max_value: clamp(setpoint + rule.tolerance, min, max),
+    };
+  }
+
+  function thresholdFor(metric) {
+    return controlThresholdFor(metric) || thresholds.find((item) => item.metric === metric);
+  }
+
+  function conditionFor(metric, value) {
     const threshold = thresholdFor(metric);
     if (!threshold || value === null || value === undefined || Number.isNaN(Number(value))) {
       return "neutral";
     }
-    return value < threshold.min_value || value > threshold.max_value ? "warning" : "optimal";
+
+    const numericValue = Number(value);
+    const min = Number(threshold.min_value);
+    const max = Number(threshold.max_value);
+    if (numericValue < min || numericValue > max) {
+      return "critical";
+    }
+
+    const range = max - min;
+    if (range <= 0) {
+      return numericValue === min ? "optimal" : "critical";
+    }
+
+    const warningSize = range * 0.2;
+    const inLowerWarningZone = numericValue >= min && numericValue <= min + warningSize;
+    const inUpperWarningZone = numericValue <= max && numericValue >= max - warningSize;
+    return inLowerWarningZone || inUpperWarningZone ? "warning" : "optimal";
   }
 
   function updateDateTime() {
@@ -40,6 +97,19 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+  }
+
+  function updateSocketStatus(isConnected) {
+    const status = document.getElementById("socket-status");
+    if (!status) {
+      return;
+    }
+
+    const label = status.querySelector("[data-socket-status-label]");
+    status.classList.toggle("status-rpi-disconnected", !isConnected);
+    if (label) {
+      label.textContent = isConnected ? status.dataset.connectedLabel : status.dataset.disconnectedLabel;
+    }
   }
 
   function setBadgeState(element, state) {
@@ -84,17 +154,17 @@
     }
 
     const value = Number(reading[metric]);
-    const state = statusFor(metric, value);
+    const state = conditionFor(metric, value);
     valueElement.textContent = formatValue(metric, value, false);
     setBadgeState(statusElement, state);
     gaugeElement.style.setProperty("--gauge-progress", `${gaugeDegrees(metric, value)}deg`);
-    gaugeElement.style.setProperty("--gauge-color", state === "warning" ? "#fbbf24" : "#10b981");
+    const gaugeColor = state === "critical" ? "#ef4444" : state === "warning" ? "#fbbf24" : "#10b981";
+    gaugeElement.style.setProperty("--gauge-color", gaugeColor);
   }
 
   function updateGauges(reading) {
     latestReading = reading;
     Object.keys(metrics).forEach((metric) => updateGauge(metric, reading));
-    renderThresholds();
   }
 
   function metricStats(metric, readings) {
@@ -172,29 +242,24 @@
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
         const value = latestReading ? Number(latestReading[item.metric]) : null;
-        const state = statusFor(item.metric, value);
-        const label = state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
-        const step = item.metric === "ph" ? "1" : "0.1";
-        const minAttr = item.metric === "ph" ? 'min="1" max="14"' : "";
+        const state = conditionFor(item.metric, value);
+        const label = state === "critical" ? "Critical" : state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
+        const stateClass = state === "critical" ? "status-critical" : state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : "";
         return `
-          <tr>
+          <tr data-threshold-row="${item.metric}">
             <td><strong>${config.label}</strong></td>
-            <td><input class="threshold-input" type="number" step="${step}" ${minAttr} value="${item.min_value}" data-metric="${item.metric}" data-field="min_value"></td>
-            <td><input class="threshold-input" type="number" step="${step}" ${minAttr} value="${item.max_value}" data-metric="${item.metric}" data-field="max_value"></td>
+            <td><input class="threshold-input" data-threshold-field="min_value" type="number" step="0.1" value="${formatValue(item.metric, item.min_value, false)}" aria-label="${config.label} minimum value"></td>
+            <td><input class="threshold-input" data-threshold-field="max_value" type="number" step="0.1" value="${formatValue(item.metric, item.max_value, false)}" aria-label="${config.label} maximum value"></td>
             <td>${config.unit}</td>
-            <td><span class="status-badge ${state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : ""}">${label}</span></td>
+            <td>
+              <span class="status-badge ${stateClass}">${label}</span>
+              <button class="threshold-save" data-threshold-save="${item.metric}" type="button">Save</button>
+            </td>
           </tr>
         `;
       })
       .join("") || `<tr><td colspan="5">No pH or salinity thresholds available.</td></tr>`;
-
-    body.innerHTML = rows;
-
-    body.querySelectorAll("input.threshold-input").forEach((input) => {
-      input.addEventListener("change", () => {
-        updateThreshold(input.dataset.metric, input.dataset.field, input.value);
-      });
-    });
+    bindThresholdSaves();
   }
 
   async function loadThresholds() {
@@ -202,6 +267,7 @@
     const payload = await response.json();
     thresholds = payload.thresholds || [];
     renderThresholds();
+    window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
   }
 
   async function loadLatestReading() {
@@ -217,6 +283,70 @@
     const payload = await response.json();
     dayHistory = payload.readings || [];
     renderTrends();
+  }
+
+  function millisecondsUntilNextMidnight() {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setHours(24, 0, 0, 0);
+    return nextMidnight.getTime() - now.getTime();
+  }
+
+  function scheduleMidnightTrendRefresh() {
+    if (trendRefreshTimeout) {
+      clearTimeout(trendRefreshTimeout);
+    }
+
+    trendRefreshTimeout = setTimeout(async () => {
+      await loadDayHistory();
+      scheduleMidnightTrendRefresh();
+    }, millisecondsUntilNextMidnight());
+  }
+
+  async function saveThreshold(metric) {
+    const row = document.querySelector(`[data-threshold-row="${metric}"]`);
+    if (!row) {
+      return;
+    }
+
+    const minInput = row.querySelector('[data-threshold-field="min_value"]');
+    const maxInput = row.querySelector('[data-threshold-field="max_value"]');
+    const minValue = Number(minInput.value);
+    const maxValue = Number(maxInput.value);
+    if (Number.isNaN(minValue) || Number.isNaN(maxValue) || minValue >= maxValue) {
+      row.classList.add("threshold-error");
+      return;
+    }
+
+    row.classList.remove("threshold-error");
+    const response = await fetch("/api/thresholds", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        [metric]: {
+          min_value: minValue,
+          max_value: maxValue,
+        },
+      }),
+    });
+    if (!response.ok) {
+      row.classList.add("threshold-error");
+      return;
+    }
+
+    const payload = await response.json();
+    thresholds = payload.thresholds || [];
+    renderThresholds();
+    if (latestReading) {
+      updateGauges(latestReading);
+    }
+    window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+  }
+
+  function bindThresholdSaves() {
+    document.querySelectorAll("[data-threshold-save]").forEach((button) => {
+      button.addEventListener("click", () => saveThreshold(button.dataset.thresholdSave));
+    });
   }
 
   function sliderDisplay(slider) {
@@ -240,6 +370,10 @@
     return Number(slider.value);
   }
 
+  function updateControlState(slider) {
+    controlState[slider.dataset.controlSlider] = sliderPayloadValue(slider);
+  }
+
   function updateSliderOutput(slider) {
     const output = document.getElementById(`${slider.dataset.controlSlider}-output`);
     if (output) {
@@ -250,6 +384,7 @@
   async function postSliderState() {
     const payload = {};
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
+      updateControlState(slider);
       payload[slider.dataset.controlSlider] = sliderPayloadValue(slider);
     });
     await fetch("/api/controls/sliders", {
@@ -261,8 +396,15 @@
 
   function bindControls() {
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
+      updateControlState(slider);
       updateSliderOutput(slider);
-      slider.addEventListener("input", () => updateSliderOutput(slider));
+      slider.addEventListener("input", () => {
+        updateControlState(slider);
+        updateSliderOutput(slider);
+        if (latestReading) {
+          updateGauges(latestReading);
+        }
+      });
       slider.addEventListener("change", postSliderState);
     });
 
@@ -278,24 +420,33 @@
           return;
         }
         button.setAttribute("aria-pressed", String(nextState));
-        button.querySelector("strong").innerHTML = `<i></i> ${nextState ? "Open" : "Closed"}`;
+        button.innerHTML = `<i></i> ${nextState ? "Open" : "Closed"}`;
       });
     });
   }
 
   function bindSocket() {
     if (typeof io !== "function") {
+      updateSocketStatus(false);
       return;
     }
-    const socket = io();
+
+    const socket = window.hatcherySocket || io();
+    window.hatcherySocket = socket;
+    if (socketBound) {
+      return;
+    }
+
+    socketBound = true;
+    socket.on("connect", () => updateSocketStatus(true));
+    socket.on("disconnect", () => updateSocketStatus(false));
+    socket.on("connect_error", () => updateSocketStatus(false));
+    updateSocketStatus(Boolean(socket.connected));
     socket.on("sensor_update", (reading) => {
       updateGauges(reading);
-      dayHistory.push(reading);
-      if (dayHistory.length > 240) {
-        dayHistory.shift();
+      if (document.querySelector('[data-page="graph"]')) {
+        window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
       }
-      renderTrends();
-      window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
     });
   }
 
@@ -304,7 +455,7 @@
     setInterval(updateDateTime, 30000);
     bindControls();
     loadThresholds().then(loadLatestReading);
-    loadDayHistory();
+    loadDayHistory().then(scheduleMidnightTrendRefresh);
     bindSocket();
   });
 })();
