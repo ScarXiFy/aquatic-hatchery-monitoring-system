@@ -574,7 +574,7 @@ h3 {
 .threshold-input {
   display: inline-flex;
   align-items: center;
-  min-width: 92px;
+  max-width: 70px;
   min-height: 27px;
   padding: 0 10px;
   border: 1px solid rgba(20, 184, 166, 0.5);
@@ -582,6 +582,21 @@ h3 {
   background: rgba(55, 65, 81, 0.72);
   color: #5eead4;
   font-weight: 900;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: inherit;
+  outline: none;
+}
+
+/*.threshold-input::-webkit-outer-spin-button,
+.threshold-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}*/
+
+.threshold-input:focus {
+  border-color: rgba(20, 184, 166, 0.9);
+  background: rgba(55, 65, 81, 0.95);
 }
 
 input.threshold-input {

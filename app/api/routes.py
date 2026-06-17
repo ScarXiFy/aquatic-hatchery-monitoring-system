@@ -95,3 +95,13 @@ def set_sliders():
         if key in payload:
             CONTROL_STATE["sliders"][key] = float(payload[key])
     return jsonify({"sliders": CONTROL_STATE["sliders"]})
+
+@api_bp.post("/threshold/<string:metric>")
+def setThreshold(metric):
+    data = request.get_json()
+    field = data["field"]
+    value = float(data["value"])
+    
+    update_threshold_field(metric, field, value)
+
+    return ("", 204)

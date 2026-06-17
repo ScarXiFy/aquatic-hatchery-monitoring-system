@@ -216,12 +216,28 @@
     Object.keys(metrics).forEach((metric) => renderTrend(metric, metricStats(metric, dayHistory)));
   }
 
+  async function updateThreshold(metric, field, value) {
+    const response = await fetch(`/api/threshold/${metric}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, value: Number(value) }),
+    });
+    if (!response.ok) {
+      alert(`Failed to update ${metric} threshold`);
+      return;
+    }
+    const entry = thresholds.find((item) => item.metric === metric);
+    if (entry) {
+      entry[field] = Number(value);
+    }
+  }
+
   function renderThresholds() {
     const body = document.getElementById("threshold-table-body");
     if (!body) {
       return;
     }
-    body.innerHTML = thresholds
+    const rows = thresholds
       .filter((item) => item.metric === "ph" || item.metric === "salinity")
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
