@@ -162,9 +162,41 @@
     gaugeElement.style.setProperty("--gauge-color", gaugeColor);
   }
 
+  function updateNavStatus(reading) {
+    const indicator = document.getElementById("status-indicator-nav");
+    if (!indicator) {
+      return;
+    }
+
+    const states = Object.keys(metrics).map((metric) => conditionFor(metric, Number(reading[metric])));
+    const overallState = states.includes("critical")
+      ? "critical"
+      : states.includes("warning")
+      ? "warning"
+      : states.every((s) => s === "neutral")
+      ? "neutral"
+      : "optimal";
+
+    indicator.classList.remove("status-warning", "status-critical", "status-neutral");
+
+    if (overallState === "critical") {
+      indicator.classList.add("status-critical");
+      indicator.lastChild.textContent = " Critical";
+    } else if (overallState === "warning") {
+      indicator.classList.add("status-warning");
+      indicator.lastChild.textContent = " Warning";
+    } else if (overallState === "neutral") {
+      indicator.classList.add("status-neutral");
+      indicator.lastChild.textContent = " Waiting";
+    } else {
+      indicator.lastChild.textContent = " Optimal";
+    }
+  }
+
   function updateGauges(reading) {
     latestReading = reading;
     Object.keys(metrics).forEach((metric) => updateGauge(metric, reading));
+    updateNavStatus(reading);
   }
 
   function metricStats(metric, readings) {
