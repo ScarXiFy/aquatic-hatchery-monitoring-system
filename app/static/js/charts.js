@@ -7,7 +7,7 @@
       color: "#06b6d4",
       min: 15,
       max: 35,
-      decimals: 0,
+      decimals: 1,
     },
     ph: {
       label: "pH Level",
@@ -16,7 +16,7 @@
       color: "#8b5cf6",
       min: 0,
       max: 14,
-      decimals: 0,
+      decimals: 1,
     },
     dissolved_oxygen: {
       label: "Dissolved Oxygen",
@@ -273,18 +273,14 @@
     try {
       const response = await fetch("/api/thresholds");
       const payload = await response.json();
-      setThresholds(payload.thresholds || []);
+      thresholds = (payload.thresholds || []).reduce((items, threshold) => {
+        items[threshold.metric] = threshold;
+        return items;
+      }, {});
       Object.values(charts).forEach((chart) => chart.update());
     } catch (error) {
       thresholds = {};
     }
-  }
-
-  function setThresholds(nextThresholds) {
-    thresholds = (nextThresholds || []).reduce((items, threshold) => {
-      items[threshold.metric] = threshold;
-      return items;
-    }, {});
   }
 
   async function loadHistory(range = "day") {
@@ -323,11 +319,6 @@
       currentReadings.shift();
     }
     setChartData(currentReadings);
-  });
-
-  window.addEventListener("hatchery:thresholds", (event) => {
-    setThresholds(event.detail || []);
-    Object.values(charts).forEach((chart) => chart.update());
   });
 
   document.addEventListener("DOMContentLoaded", () => {
