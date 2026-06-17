@@ -162,9 +162,41 @@
     gaugeElement.style.setProperty("--gauge-color", gaugeColor);
   }
 
+  function updateNavStatus(reading) {
+    const indicator = document.getElementById("status-indicator-nav");
+    if (!indicator) {
+      return;
+    }
+
+    const states = Object.keys(metrics).map((metric) => conditionFor(metric, Number(reading[metric])));
+    const overallState = states.includes("critical")
+      ? "critical"
+      : states.includes("warning")
+      ? "warning"
+      : states.every((s) => s === "neutral")
+      ? "neutral"
+      : "optimal";
+
+    indicator.classList.remove("status-warning", "status-critical", "status-neutral");
+
+    if (overallState === "critical") {
+      indicator.classList.add("status-critical");
+      indicator.lastChild.textContent = " Critical";
+    } else if (overallState === "warning") {
+      indicator.classList.add("status-warning");
+      indicator.lastChild.textContent = " Warning";
+    } else if (overallState === "neutral") {
+      indicator.classList.add("status-neutral");
+      indicator.lastChild.textContent = " Waiting";
+    } else {
+      indicator.lastChild.textContent = " Optimal";
+    }
+  }
+
   function updateGauges(reading) {
     latestReading = reading;
     Object.keys(metrics).forEach((metric) => updateGauge(metric, reading));
+    updateNavStatus(reading);
   }
 
   function metricStats(metric, readings) {
@@ -229,11 +261,13 @@
         const state = conditionFor(item.metric, value);
         const label = state === "critical" ? "Critical" : state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
         const stateClass = state === "critical" ? "status-critical" : state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : "";
+        const step = item.metric === "ph" ? "1" : "0.1";
+        const minAttr = item.metric === "ph" ? 'min="1" max="14"' : "";
         return `
           <tr data-threshold-row="${item.metric}">
             <td><strong>${config.label}</strong></td>
-            <td><input class="threshold-input" data-threshold-field="min_value" type="number" step="0.1" value="${formatValue(item.metric, item.min_value, false)}" aria-label="${config.label} minimum value"></td>
-            <td><input class="threshold-input" data-threshold-field="max_value" type="number" step="0.1" value="${formatValue(item.metric, item.max_value, false)}" aria-label="${config.label} maximum value"></td>
+            <td><input class="threshold-input" data-threshold-field="min_value" type="number" step="${step}" ${minAttr} value="${formatValue(item.metric, item.min_value, false)}" aria-label="${config.label} minimum value"></td>
+            <td><input class="threshold-input" data-threshold-field="max_value" type="number" step="${step}" ${minAttr} value="${formatValue(item.metric, item.max_value, false)}" aria-label="${config.label} maximum value"></td>
             <td>${config.unit}</td>
             <td>
               <span class="status-badge ${stateClass}">${label}</span>

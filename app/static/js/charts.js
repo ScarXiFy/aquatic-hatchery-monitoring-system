@@ -7,7 +7,7 @@
       color: "#06b6d4",
       min: 15,
       max: 35,
-      decimals: 0,
+      decimals: 1,
     },
     ph: {
       label: "pH Level",
