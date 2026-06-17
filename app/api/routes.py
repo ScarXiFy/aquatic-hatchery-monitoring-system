@@ -1,7 +1,7 @@
 from flask import Blueprint, jsonify, request
 from app.api.piUtils import sourceValveState, drainValveState
 
-from app.models import get_history, get_latest_reading, get_thresholds
+from app.models import get_history, get_latest_reading, get_thresholds, update_threshold_field
 
 api_bp = Blueprint("api", __name__)
 
@@ -63,3 +63,13 @@ def set_sliders():
         if key in payload:
             CONTROL_STATE["sliders"][key] = float(payload[key])
     return jsonify({"sliders": CONTROL_STATE["sliders"]})
+
+@api_bp.post("/threshold/<string:metric>")
+def setThreshold(metric):
+    data = request.get_json()
+    field = data["field"]
+    value = float(data["value"])
+    
+    update_threshold_field(metric, field, value)
+
+    return ("", 204)

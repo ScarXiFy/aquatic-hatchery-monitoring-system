@@ -146,29 +146,55 @@
     Object.keys(metrics).forEach((metric) => renderTrend(metric, metricStats(metric, dayHistory)));
   }
 
+  async function updateThreshold(metric, field, value) {
+    const response = await fetch(`/api/threshold/${metric}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field, value: Number(value) }),
+    });
+    if (!response.ok) {
+      alert(`Failed to update ${metric} threshold`);
+      return;
+    }
+    const entry = thresholds.find((item) => item.metric === metric);
+    if (entry) {
+      entry[field] = Number(value);
+    }
+  }
+
   function renderThresholds() {
     const body = document.getElementById("threshold-table-body");
     if (!body) {
       return;
     }
-    body.innerHTML = thresholds
+    const rows = thresholds
       .filter((item) => item.metric === "ph" || item.metric === "salinity")
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
         const value = latestReading ? Number(latestReading[item.metric]) : null;
         const state = statusFor(item.metric, value);
         const label = state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
+        const step = item.metric === "ph" ? "1" : "0.1";
+        const minAttr = item.metric === "ph" ? 'min="1" max="14"' : "";
         return `
           <tr>
             <td><strong>${config.label}</strong></td>
-            <td><span class="threshold-input">${item.min_value}</span></td>
-            <td><span class="threshold-input">${item.max_value}</span></td>
+            <td><input class="threshold-input" type="number" step="${step}" ${minAttr} value="${item.min_value}" data-metric="${item.metric}" data-field="min_value"></td>
+            <td><input class="threshold-input" type="number" step="${step}" ${minAttr} value="${item.max_value}" data-metric="${item.metric}" data-field="max_value"></td>
             <td>${config.unit}</td>
             <td><span class="status-badge ${state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : ""}">${label}</span></td>
           </tr>
         `;
       })
       .join("") || `<tr><td colspan="5">No pH or salinity thresholds available.</td></tr>`;
+
+    body.innerHTML = rows;
+
+    body.querySelectorAll("input.threshold-input").forEach((input) => {
+      input.addEventListener("change", () => {
+        updateThreshold(input.dataset.metric, input.dataset.field, input.value);
+      });
+    });
   }
 
   async function loadThresholds() {

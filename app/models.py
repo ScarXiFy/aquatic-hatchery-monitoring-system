@@ -103,3 +103,20 @@ def get_thresholds():
         }
         for row in rows
     ]
+
+def update_threshold_field(metric, field, value):
+    if field not in ("min_value", "max_value"):
+        raise ValueError("Invalid threshold field")
+
+    db = get_db()
+
+    db.execute(
+        f"""
+        UPDATE thresholds
+        SET {field} = ?
+        WHERE metric = ?
+        """,
+        (value, metric)
+    )
+
+    db.commit()
