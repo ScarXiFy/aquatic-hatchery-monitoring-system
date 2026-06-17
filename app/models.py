@@ -104,29 +104,19 @@ def get_thresholds():
         for row in rows
     ]
 
+def update_threshold_field(metric, field, value):
+    if field not in ("min_value", "max_value"):
+        raise ValueError("Invalid threshold field")
 
-def update_thresholds(updates):
-    ensure_default_thresholds()
-    allowed_metrics = {"ph", "salinity"}
     db = get_db()
 
-    for metric, limits in updates.items():
-        if metric not in allowed_metrics:
-            raise ValueError("only ph and salinity thresholds can be updated")
-
-        min_value = float(limits["min_value"])
-        max_value = float(limits["max_value"])
-        if min_value >= max_value:
-            raise ValueError("minimum threshold must be less than maximum threshold")
-
-        db.execute(
-            """
-            UPDATE thresholds
-            SET min_value = ?, max_value = ?
-            WHERE metric = ?
-            """,
-            (min_value, max_value, metric),
-        )
+    db.execute(
+        f"""
+        UPDATE thresholds
+        SET {field} = ?
+        WHERE metric = ?
+        """,
+        (value, metric)
+    )
 
     db.commit()
-    return get_thresholds()
