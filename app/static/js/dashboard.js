@@ -134,7 +134,6 @@
     element.textContent = "Waiting";
     element.classList.add("status-neutral");
   }
-
   function gaugeDegrees(metric, value) {
     const config = metrics[metric];
     if (!config) {
@@ -145,11 +144,32 @@
     const min = threshold ? Number(threshold.min_value) : Number(config.min);
     const max = threshold ? Number(threshold.max_value) : Number(config.max);
     const numericValue = Number(value);
-    if (Number.isNaN(numericValue) || Number.isNaN(min) || Number.isNaN(max) || max <= min) {
+
+    if (
+      Number.isNaN(numericValue) ||
+      Number.isNaN(min) ||
+      Number.isNaN(max) ||
+      max <= min
+    ) {
       return 0;
     }
 
-    const ratio = (numericValue - min) / (max - min);
+    const buffer = metric === "ph" ? 2 : 5;
+
+    let gaugeMin = min - buffer;
+    let gaugeMax = max + buffer;
+
+    if (metric === "ph" && gaugeMax > 14) {
+      gaugeMax = 14;
+    }
+    if (metric === "ph" && gaugeMin < 1) {
+      gaugeMin = 1;
+    } else if (metric !== "ph" && gaugeMin < 0) {
+      gaugeMin = 0;
+    }
+
+    const ratio = (numericValue - gaugeMin) / (gaugeMax - gaugeMin);
+
     return clamp(ratio, 0, 1) * 180;
   }
 
