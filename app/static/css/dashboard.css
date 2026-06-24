@@ -661,6 +661,47 @@ input.threshold-input {
   margin-bottom: 12px;
 }
 
+.chart-header-left {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.chart-update-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  margin-top: 1px;
+  line-height: 1;
+}
+
+.chart-trend {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 4px;
+  font-variant-numeric: tabular-nums;
+  display: inline-block;
+  line-height: 1.2;
+}
+
+.chart-trend.trend-up {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+}
+
+.chart-trend.trend-down {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+
+.chart-trend.trend-stable {
+  background: rgba(96, 165, 250, 0.16);
+  color: #60a5fa;
+}
+
 .chart-card h2 {
   margin-bottom: 0;
   font-size: 15px;

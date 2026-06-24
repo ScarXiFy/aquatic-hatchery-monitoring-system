@@ -46,6 +46,12 @@
   let currentRange = "day";
   let currentReadings = [];
   let thresholds = {};
+  const lastUpdateTime = {
+    temperature: null,
+    ph: null,
+    dissolved_oxygen: null,
+    salinity: null
+  };
 
   // ── Threshold band plugin ────────────────────────────────────────────
   const thresholdBandPlugin = {
@@ -68,8 +74,8 @@
       const safeBottom = yScale.getPixelForValue(safeMin);
 
       ctx.save();
-      // Safe operating range — green band
-      ctx.fillStyle = "rgba(16, 185, 129, 0.16)";
+      // Safe operating range — green band (increased visibility to 0.24)
+      ctx.fillStyle = "rgba(16, 185, 129, 0.24)";
       ctx.fillRect(chartArea.left, safeTop, chartArea.right - chartArea.left, safeBottom - safeTop);
       // Out-of-range zones — amber tint
       ctx.fillStyle = "rgba(251, 191, 36, 0.07)";
@@ -79,61 +85,8 @@
     },
   };
 
-  // ── Threshold label plugin ───────────────────────────────────────────
-  const thresholdLabelPlugin = {
-    id: "thresholdLabelPlugin",
-    afterDatasetsDraw(chart, args, pluginOptions) {
-      const metric = pluginOptions && pluginOptions.metric;
-      const limits = thresholds[metric];
-      if (!limits) return;
-
-      const { ctx, chartArea, scales } = chart;
-      const yScale = scales.y;
-      if (!chartArea || !yScale) return;
-
-      ctx.save();
-
-      function drawLabel(text, yPos) {
-        if (yPos < chartArea.top || yPos > chartArea.bottom) return;
-
-        ctx.font = "bold 11px Arial, sans-serif";
-        const padding = { x: 6, y: 4 };
-        const textWidth = ctx.measureText(text).width;
-        const textHeight = 11;
-        const pillWidth = textWidth + padding.x * 2;
-        const pillHeight = textHeight + padding.y * 2;
-        const chartWidth = chartArea.right - chartArea.left;
-        const x = chartArea.left + chartWidth * 0.88 - pillWidth / 2;
-        const y = yPos - pillHeight / 2;
-
-        ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
-        ctx.beginPath();
-        if (ctx.roundRect) {
-          ctx.roundRect(x, y, pillWidth, pillHeight, 4);
-        } else {
-          ctx.rect(x, y, pillWidth, pillHeight);
-        }
-        ctx.fill();
-
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(text, x + pillWidth / 2, y + pillHeight / 2 + 1);
-      }
-
-      const minVal = Number(limits.min_value);
-      if (!Number.isNaN(minVal)) drawLabel("Min Threshold", yScale.getPixelForValue(minVal));
-
-      const maxVal = Number(limits.max_value);
-      if (!Number.isNaN(maxVal)) drawLabel("Max Threshold", yScale.getPixelForValue(maxVal));
-
-      ctx.restore();
-    },
-  };
-
   if (typeof Chart !== "undefined") {
     Chart.register(thresholdBandPlugin);
-    Chart.register(thresholdLabelPlugin);
   }
 
   // ── Utility helpers ──────────────────────────────────────────────────
@@ -270,7 +223,7 @@
     };
   }
 
-  /** Update Current / Min / Max text inside each chart card header */
+  /** Update Current / Min / Max text inside each chart card header and compute percentage trend */
   function updateStats(points) {
     Object.keys(metrics).forEach((metric) => {
       const stats = statsFor(metric, points);
@@ -279,6 +232,36 @@
       container.querySelector('[data-stat="current"]').textContent = formatValue(metric, stats.current);
       container.querySelector('[data-stat="min"]').textContent = formatValue(metric, stats.min);
       container.querySelector('[data-stat="max"]').textContent = formatValue(metric, stats.max);
+
+      // Percentage Trend Indicator calculation:
+      // Compare the latest reading with the one immediately preceding it
+      const validPoints = points.map(p => p[metric]).filter(v => v !== null && !Number.isNaN(v));
+      const trendEl = document.querySelector(`[data-chart-trend="${metric}"]`);
+      if (trendEl) {
+        if (validPoints.length > 1) {
+          const currentVal = validPoints[validPoints.length - 1];
+          const prevVal = validPoints[validPoints.length - 2];
+          if (prevVal !== 0) {
+            const pct = ((currentVal - prevVal) / prevVal) * 100;
+            const sign = pct > 0 ? "+" : "";
+            trendEl.textContent = `(${sign}${pct.toFixed(1)}%)`;
+            trendEl.className = "chart-trend";
+            if (pct > 0) {
+              trendEl.classList.add("trend-up");
+            } else if (pct < 0) {
+              trendEl.classList.add("trend-down");
+            } else {
+              trendEl.classList.add("trend-stable");
+            }
+          } else {
+            trendEl.textContent = "(0.0%)";
+            trendEl.className = "chart-trend trend-stable";
+          }
+        } else {
+          trendEl.textContent = "";
+          trendEl.className = "chart-trend";
+        }
+      }
     });
   }
 
@@ -361,12 +344,52 @@
             backgroundColor: `${config.color}1a`,
             fill: true,
             borderWidth: 2.5,
-            pointRadius: 4,
-            pointHoverRadius: 7,
+            pointRadius: (context) => {
+              if (context.datasetIndex !== 0) return 0;
+              const index = context.dataIndex;
+              const count = context.dataset.data.length;
+              if (count > 0 && index === count - 1) {
+                return 6; // Highlight newest point
+              }
+              return 0; // Hide other permanent markers
+            },
+            pointHoverRadius: (context) => {
+              if (context.datasetIndex !== 0) return 0;
+              const index = context.dataIndex;
+              const count = context.dataset.data.length;
+              if (count > 0 && index === count - 1) {
+                return 8; // Larger hover for newest point
+              }
+              return 6; // Show marker on hover for other points
+            },
             pointHitRadius: 16,
-            pointBackgroundColor: "#ffffff",
-            pointBorderColor: config.color,
-            pointBorderWidth: 2,
+            pointBackgroundColor: (context) => {
+              if (context.datasetIndex !== 0) return "#ffffff";
+              const index = context.dataIndex;
+              const count = context.dataset.data.length;
+              if (count > 0 && index === count - 1) {
+                return config.color; // Metric color fill for the newest
+              }
+              return "#ffffff";
+            },
+            pointBorderColor: (context) => {
+              if (context.datasetIndex !== 0) return config.color;
+              const index = context.dataIndex;
+              const count = context.dataset.data.length;
+              if (count > 0 && index === count - 1) {
+                return "#ffffff"; // White border for the newest
+              }
+              return config.color;
+            },
+            pointBorderWidth: (context) => {
+              if (context.datasetIndex !== 0) return 0;
+              const index = context.dataIndex;
+              const count = context.dataset.data.length;
+              if (count > 0 && index === count - 1) {
+                return 3;
+              }
+              return 2;
+            },
             pointHoverBackgroundColor: config.color,
             pointHoverBorderColor: "#ffffff",
             pointHoverBorderWidth: 2.5,
@@ -409,7 +432,6 @@
         plugins: {
           legend: { display: false },
           thresholdBandPlugin: { metric },
-          thresholdLabelPlugin: { metric },
           tooltip: {
             backgroundColor: "rgba(15, 23, 42, 0.96)",
             borderColor: "rgba(15, 118, 110, 0.6)",
@@ -513,11 +535,16 @@
 
       chart.options.scales.x.ticks.maxTicksLimit = currentRange === "week" ? 8 : 12;
       chart.update();
+
+      if (points.length > 0) {
+        lastUpdateTime[metric] = Date.now();
+      }
     });
 
     updateStats(points);
     updateKpiCards(points);
     updateChartStatusBadges(points);
+    updateElapsedTimes();
   }
 
   // ── Threshold management ─────────────────────────────────────────────
@@ -586,8 +613,28 @@
     updateChartStatusBadges(points);
   });
 
+  function updateElapsedTimes() {
+    const now = Date.now();
+    Object.keys(metrics).forEach((metric) => {
+      const el = document.querySelector(`[data-chart-update="${metric}"]`);
+      if (!el) return;
+      const t = lastUpdateTime[metric];
+      if (!t) {
+        el.textContent = "Waiting for data...";
+        return;
+      }
+      const seconds = Math.round((now - t) / 1000);
+      if (seconds < 5) {
+        el.textContent = "Updated just now";
+      } else {
+        el.textContent = `Updated ${seconds}s ago`;
+      }
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     initializeCharts();
     bindRangeButtons();
+    setInterval(updateElapsedTimes, 1000);
   });
 })();
