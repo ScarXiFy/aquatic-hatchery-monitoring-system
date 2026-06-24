@@ -12,20 +12,77 @@
     </div>
   </header>
 
+  <!-- KPI Summary Strip -->
+  <div class="kpi-strip" role="region" aria-label="Live sensor summary">
+    <div class="kpi-card glass-panel" data-kpi="temperature">
+      <div class="kpi-top">
+        <span class="kpi-label">Temperature</span>
+        <span class="kpi-badge" data-kpi-status="temperature">—</span>
+      </div>
+      <div class="kpi-bottom">
+        <div class="kpi-reading">
+          <strong data-kpi-value="temperature">--</strong>
+          <span class="kpi-unit">°C</span>
+        </div>
+        <span class="kpi-trend" data-kpi-trend="temperature" aria-hidden="true">—</span>
+      </div>
+    </div>
+
+    <div class="kpi-card glass-panel" data-kpi="ph">
+      <div class="kpi-top">
+        <span class="kpi-label">pH Level</span>
+        <span class="kpi-badge" data-kpi-status="ph">—</span>
+      </div>
+      <div class="kpi-bottom">
+        <div class="kpi-reading">
+          <strong data-kpi-value="ph">--</strong>
+          <span class="kpi-unit">pH</span>
+        </div>
+        <span class="kpi-trend" data-kpi-trend="ph" aria-hidden="true">—</span>
+      </div>
+    </div>
+
+    <div class="kpi-card glass-panel" data-kpi="dissolved_oxygen">
+      <div class="kpi-top">
+        <span class="kpi-label">Dissolved O₂</span>
+        <span class="kpi-badge" data-kpi-status="dissolved_oxygen">—</span>
+      </div>
+      <div class="kpi-bottom">
+        <div class="kpi-reading">
+          <strong data-kpi-value="dissolved_oxygen">--</strong>
+          <span class="kpi-unit">mg/L</span>
+        </div>
+        <span class="kpi-trend" data-kpi-trend="dissolved_oxygen" aria-hidden="true">—</span>
+      </div>
+    </div>
+
+    <div class="kpi-card glass-panel" data-kpi="salinity">
+      <div class="kpi-top">
+        <span class="kpi-label">Salinity</span>
+        <span class="kpi-badge" data-kpi-status="salinity">—</span>
+      </div>
+      <div class="kpi-bottom">
+        <div class="kpi-reading">
+          <strong data-kpi-value="salinity">--</strong>
+          <span class="kpi-unit">g/L</span>
+        </div>
+        <span class="kpi-trend" data-kpi-trend="salinity" aria-hidden="true">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chart Grid -->
   <div class="chart-grid">
     <article class="glass-panel chart-card">
       <div class="chart-card-header">
-        <div>
-          <h2>Temperature</h2>
+        <h2>Temperature</h2>
+        <div class="chart-header-right">
+          <span class="chart-status-badge" data-chart-status="temperature">—</span>
           <div class="chart-stats" data-chart-stats="temperature">
             <span>Current: <strong data-stat="current">--</strong></span>
             <span>Min: <strong data-stat="min">--</strong></span>
             <span>Max: <strong data-stat="max">--</strong></span>
           </div>
-        </div>
-        <div class="chart-actions" aria-hidden="true">
-          <span></span>
-          <span></span>
         </div>
       </div>
       <div class="chart-canvas-wrap">
@@ -35,17 +92,14 @@
 
     <article class="glass-panel chart-card">
       <div class="chart-card-header">
-        <div>
-          <h2>pH Level</h2>
+        <h2>pH Level</h2>
+        <div class="chart-header-right">
+          <span class="chart-status-badge" data-chart-status="ph">—</span>
           <div class="chart-stats" data-chart-stats="ph">
             <span>Current: <strong data-stat="current">--</strong></span>
             <span>Min: <strong data-stat="min">--</strong></span>
             <span>Max: <strong data-stat="max">--</strong></span>
           </div>
-        </div>
-        <div class="chart-actions" aria-hidden="true">
-          <span></span>
-          <span></span>
         </div>
       </div>
       <div class="chart-canvas-wrap">
@@ -55,17 +109,14 @@
 
     <article class="glass-panel chart-card">
       <div class="chart-card-header">
-        <div>
-          <h2>Dissolved Oxygen</h2>
+        <h2>Dissolved Oxygen</h2>
+        <div class="chart-header-right">
+          <span class="chart-status-badge" data-chart-status="dissolved_oxygen">—</span>
           <div class="chart-stats" data-chart-stats="dissolved_oxygen">
             <span>Current: <strong data-stat="current">--</strong></span>
             <span>Min: <strong data-stat="min">--</strong></span>
             <span>Max: <strong data-stat="max">--</strong></span>
           </div>
-        </div>
-        <div class="chart-actions" aria-hidden="true">
-          <span></span>
-          <span></span>
         </div>
       </div>
       <div class="chart-canvas-wrap">
@@ -75,17 +126,14 @@
 
     <article class="glass-panel chart-card">
       <div class="chart-card-header">
-        <div>
-          <h2>Salinity</h2>
+        <h2>Salinity</h2>
+        <div class="chart-header-right">
+          <span class="chart-status-badge" data-chart-status="salinity">—</span>
           <div class="chart-stats" data-chart-stats="salinity">
             <span>Current: <strong data-stat="current">--</strong></span>
             <span>Min: <strong data-stat="min">--</strong></span>
             <span>Max: <strong data-stat="max">--</strong></span>
           </div>
-        </div>
-        <div class="chart-actions" aria-hidden="true">
-          <span></span>
-          <span></span>
         </div>
       </div>
       <div class="chart-canvas-wrap">
