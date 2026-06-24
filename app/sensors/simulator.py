@@ -10,7 +10,7 @@ def generate_sensor_reading():
         "temperature": round(random.uniform(25.0, 29.5), 2),
         "dissolved_oxygen": round(random.uniform(0, 1), 2),
         "salinity": round(random.uniform(1, 35), 2),
-        "ph": round(random.uniform(1, 2), 2),
+        "ph": round(random.uniform(4, 9), 2),
     }
 
 
