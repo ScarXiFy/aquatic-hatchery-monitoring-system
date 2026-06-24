@@ -1,5 +1,4 @@
 (function () {
-  // ── Metric definitions ───────────────────────────────────────────────
   const metrics = {
     temperature: {
       label: "Temperature",
@@ -53,7 +52,6 @@
     salinity: null
   };
 
-  // ── Threshold band plugin ────────────────────────────────────────────
   const thresholdBandPlugin = {
     id: "thresholdBandPlugin",
     beforeDatasetsDraw(chart, args, pluginOptions) {
@@ -74,10 +72,8 @@
       const safeBottom = yScale.getPixelForValue(safeMin);
 
       ctx.save();
-      // Safe operating range — green band (increased visibility to 0.24)
       ctx.fillStyle = "rgba(16, 185, 129, 0.24)";
       ctx.fillRect(chartArea.left, safeTop, chartArea.right - chartArea.left, safeBottom - safeTop);
-      // Out-of-range zones — amber tint
       ctx.fillStyle = "rgba(251, 191, 36, 0.07)";
       ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, safeTop - chartArea.top);
       ctx.fillRect(chartArea.left, safeBottom, chartArea.right - chartArea.left, chartArea.bottom - safeBottom);
@@ -89,7 +85,6 @@
     Chart.register(thresholdBandPlugin);
   }
 
-  // ── Utility helpers ──────────────────────────────────────────────────
   function formatValue(metric, value) {
     const config = metrics[metric];
     if (!config || value === null || value === undefined || Number.isNaN(Number(value))) return "--";
@@ -114,11 +109,6 @@
     return values.reduce((sum, v) => sum + v, 0) / values.length;
   }
 
-  // ── Status helpers ───────────────────────────────────────────────────
-  /**
-   * Returns "optimal" | "warning" | "critical" | "neutral"
-   * Warning zone = within 15% of either threshold edge
-   */
   function conditionFor(metric, value) {
     const limits = thresholds[metric];
     if (!limits || value === null || value === undefined || Number.isNaN(Number(value))) return "neutral";
@@ -137,12 +127,6 @@
     return { optimal: "Normal", warning: "Warning", critical: "Critical", neutral: "—" }[condition] || "—";
   }
 
-  // ── Data summarization ───────────────────────────────────────────────
-  /**
-   * Day view: return individual readings from the last 24 hours.
-   * Avoids hourly bucketing which collapses sparse data into 1–2 points.
-   * Sub-samples to MAX_POINTS when the dataset is very large.
-   */
   function buildDayPoints(readings) {
     const MAX_POINTS = 120;
     const now = Date.now();
@@ -166,10 +150,6 @@
     });
   }
 
-  /**
-   * Week view: 4-hour buckets → up to 42 points over 7 days.
-   * More granular than daily buckets, giving meaningful curves.
-   */
   function buildWeekPoints(readings) {
     const buckets = new Map();
 
@@ -212,7 +192,6 @@
     return range === "week" ? buildWeekPoints(readings) : buildDayPoints(readings);
   }
 
-  // ── Stats & KPI updates ──────────────────────────────────────────────
   function statsFor(metric, points) {
     const values = points.map((p) => Number(p[metric])).filter((v) => !Number.isNaN(v));
     if (!values.length) return { current: null, min: null, max: null };
@@ -223,7 +202,6 @@
     };
   }
 
-  /** Update Current / Min / Max text inside each chart card header and compute percentage trend */
   function updateStats(points) {
     Object.keys(metrics).forEach((metric) => {
       const stats = statsFor(metric, points);
@@ -233,8 +211,6 @@
       container.querySelector('[data-stat="min"]').textContent = formatValue(metric, stats.min);
       container.querySelector('[data-stat="max"]').textContent = formatValue(metric, stats.max);
 
-      // Percentage Trend Indicator calculation:
-      // Compare the latest reading with the one immediately preceding it
       const validPoints = points.map(p => p[metric]).filter(v => v !== null && !Number.isNaN(v));
       const trendEl = document.querySelector(`[data-chart-trend="${metric}"]`);
       if (trendEl) {
@@ -265,7 +241,6 @@
     });
   }
 
-  /** Update the four KPI cards above the chart grid */
   function updateKpiCards(points) {
     const len = points.length;
     Object.keys(metrics).forEach((metric) => {
@@ -274,7 +249,6 @@
       const prev = len > 1 ? Number(points[len - 2][metric]) : null;
       const condition = conditionFor(metric, current);
 
-      // Numeric value
       const valueEl = document.querySelector(`[data-kpi-value="${metric}"]`);
       if (valueEl) {
         valueEl.textContent =
@@ -283,18 +257,15 @@
             : "--";
       }
 
-      // Badge
       const badgeEl = document.querySelector(`[data-kpi-status="${metric}"]`);
       if (badgeEl) {
         badgeEl.textContent = conditionLabel(condition);
         badgeEl.dataset.condition = condition;
       }
 
-      // Card border colour
       const card = document.querySelector(`[data-kpi="${metric}"]`);
       if (card) card.dataset.condition = condition;
 
-      // Trend arrow
       const trendEl = document.querySelector(`[data-kpi-trend="${metric}"]`);
       if (trendEl && current !== null && prev !== null && !Number.isNaN(current) && !Number.isNaN(prev)) {
         const diff = current - prev;
@@ -313,7 +284,6 @@
     });
   }
 
-  /** Update the status badge embedded in each chart card header */
   function updateChartStatusBadges(points) {
     const len = points.length;
     Object.keys(metrics).forEach((metric) => {
@@ -327,7 +297,6 @@
     });
   }
 
-  // ── Chart creation ───────────────────────────────────────────────────
   function createChart(canvas) {
     const metric = canvas.dataset.metric;
     const config = metrics[metric];
@@ -349,18 +318,18 @@
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
-                return 6; // Highlight newest point
+                return 6;
               }
-              return 0; // Hide other permanent markers
+              return 0;
             },
             pointHoverRadius: (context) => {
               if (context.datasetIndex !== 0) return 0;
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
-                return 8; // Larger hover for newest point
+                return 8;
               }
-              return 6; // Show marker on hover for other points
+              return 6;
             },
             pointHitRadius: 16,
             pointBackgroundColor: (context) => {
@@ -368,7 +337,7 @@
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
-                return config.color; // Metric color fill for the newest
+                return config.color;
               }
               return "#ffffff";
             },
@@ -377,7 +346,7 @@
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
-                return "#ffffff"; // White border for the newest
+                return "#ffffff";
               }
               return config.color;
             },
@@ -445,7 +414,6 @@
             displayColors: false,
             caretSize: 5,
             callbacks: {
-              // Show sensor label + full timestamp as tooltip title
               title: (items) => {
                 if (!items.length) return config.label;
                 const idx = items[0].dataIndex;
@@ -453,14 +421,12 @@
                 if (!timestamps || !timestamps[idx]) return config.label;
                 const d = new Date(timestamps[idx]);
                 const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                // In week view also show the date
                 const dateStr =
                   currentRange === "week"
                     ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " "
                     : "";
                 return `${config.label}  ·  ${dateStr}${timeStr}`;
               },
-              // Only render the primary dataset; skip threshold lines
               label: (context) => {
                 if (context.datasetIndex !== 0) return null;
                 const value = context.parsed.y;
@@ -510,7 +476,6 @@
     });
   }
 
-  // ── Data update ──────────────────────────────────────────────────────
   function setChartData(readings) {
     currentReadings = readings;
     const points = summarizeHistory(readings, currentRange);
@@ -547,7 +512,6 @@
     updateElapsedTimes();
   }
 
-  // ── Threshold management ─────────────────────────────────────────────
   async function loadThresholds() {
     try {
       const response = await fetch("/api/thresholds");
@@ -566,7 +530,6 @@
     }, {});
   }
 
-  // ── History loading ──────────────────────────────────────────────────
   async function loadHistory(range = "day") {
     currentRange = range;
     const response = await fetch(`/api/readings/history?range=${range}`);
@@ -574,7 +537,6 @@
     setChartData(payload.readings || []);
   }
 
-  // ── Init ─────────────────────────────────────────────────────────────
   function initializeCharts() {
     document.querySelectorAll("canvas[data-chart='history']").forEach((canvas) => {
       charts[canvas.id] = createChart(canvas);
@@ -595,11 +557,9 @@
     });
   }
 
-  // ── Live sensor events ───────────────────────────────────────────────
   window.addEventListener("hatchery:reading", (event) => {
     if (!Object.keys(charts).length || !event.detail) return;
     currentReadings.push(event.detail);
-    // Keep a rolling 500-reading buffer (generous for 24-hour day view)
     if (currentReadings.length > 500) currentReadings.shift();
     setChartData(currentReadings);
   });
@@ -607,7 +567,6 @@
   window.addEventListener("hatchery:thresholds", (event) => {
     setThresholds(event.detail || []);
     Object.values(charts).forEach((chart) => chart.update());
-    // Re-evaluate badges with updated threshold values
     const points = summarizeHistory(currentReadings, currentRange);
     updateKpiCards(points);
     updateChartStatusBadges(points);
