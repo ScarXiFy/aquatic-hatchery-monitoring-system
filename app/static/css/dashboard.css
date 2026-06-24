@@ -591,22 +591,6 @@ input.threshold-input {
   outline: 0;
 }
 
-.threshold-save {
-  margin-left: 8px;
-  padding: 6px 9px;
-  border: 1px solid rgba(45, 212, 191, 0.35);
-  border-radius: 8px;
-  background: rgba(20, 184, 166, 0.2);
-  color: #5eead4;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.threshold-save:hover {
-  background: rgba(20, 184, 166, 0.3);
-}
-
 .threshold-error .threshold-input {
   border-color: rgba(239, 68, 68, 0.75);
 }

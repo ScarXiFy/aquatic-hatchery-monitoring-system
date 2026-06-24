@@ -5,7 +5,9 @@
   let latestReading = null;
   let dayHistory = [];
   let socketBound = false;
+  let hasSocketConnected = false;
   let trendRefreshTimeout = null;
+  const thresholdSaveTimers = new Map();
   const controlState = {
     temperature_setpoint: 26,
     dissolved_oxygen_setpoint: 7.2,
@@ -286,10 +288,6 @@
       .filter((item) => item.metric === "ph" || item.metric === "salinity")
       .map((item) => {
         const config = metrics[item.metric] || { label: item.metric, unit: "" };
-        const value = latestReading ? Number(latestReading[item.metric]) : null;
-        const state = conditionFor(item.metric, value);
-        const label = state === "critical" ? "Critical" : state === "warning" ? "Warning" : state === "optimal" ? "Optimal" : "Waiting";
-        const stateClass = state === "critical" ? "status-critical" : state === "warning" ? "status-warning" : state === "neutral" ? "status-neutral" : "";
         const step = item.metric === "ph" ? "1" : "0.1";
         const minAttr = item.metric === "ph" ? 'min="1" max="14"' : "";
         return `
@@ -298,15 +296,11 @@
             <td><input class="threshold-input" data-threshold-field="min_value" type="number" step="${step}" ${minAttr} value="${formatValue(item.metric, item.min_value, false)}" aria-label="${config.label} minimum value"></td>
             <td><input class="threshold-input" data-threshold-field="max_value" type="number" step="${step}" ${minAttr} value="${formatValue(item.metric, item.max_value, false)}" aria-label="${config.label} maximum value"></td>
             <td>${config.unit}</td>
-            <td>
-              <span class="status-badge ${stateClass}">${label}</span>
-              <button class="threshold-save" data-threshold-save="${item.metric}" type="button">Save</button>
-            </td>
           </tr>
         `;
       })
-      .join("") || `<tr><td colspan="5">No pH or salinity thresholds available.</td></tr>`;
-    bindThresholdSaves();
+      .join("") || `<tr><td colspan="4">No pH or salinity thresholds available.</td></tr>`;
+    bindThresholdInputs();
   }
 
   async function loadThresholds() {
@@ -315,6 +309,13 @@
     thresholds = payload.thresholds || [];
     renderThresholds();
     window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+  }
+
+  function isEditingThresholds() {
+    return Boolean(
+      thresholdSaveTimers.size ||
+        (document.activeElement && document.activeElement.classList.contains("threshold-input"))
+    );
   }
 
   async function loadLatestReading() {
@@ -383,16 +384,47 @@
 
     const payload = await response.json();
     thresholds = payload.thresholds || [];
-    renderThresholds();
     if (latestReading) {
       updateGauges(latestReading);
     }
     window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
   }
 
-  function bindThresholdSaves() {
-    document.querySelectorAll("[data-threshold-save]").forEach((button) => {
-      button.addEventListener("click", () => saveThreshold(button.dataset.thresholdSave));
+  function scheduleThresholdSave(metric) {
+    if (thresholdSaveTimers.has(metric)) {
+      clearTimeout(thresholdSaveTimers.get(metric));
+    }
+    thresholdSaveTimers.set(
+      metric,
+      setTimeout(() => {
+        thresholdSaveTimers.delete(metric);
+        saveThreshold(metric);
+      }, 500)
+    );
+  }
+
+  function bindThresholdInputs() {
+    document.querySelectorAll("[data-threshold-row] .threshold-input").forEach((input) => {
+      input.addEventListener("input", () => {
+        const row = input.closest("[data-threshold-row]");
+        if (!row) {
+          return;
+        }
+        row.classList.remove("threshold-error");
+        scheduleThresholdSave(row.dataset.thresholdRow);
+      });
+
+      input.addEventListener("change", () => {
+        const row = input.closest("[data-threshold-row]");
+        if (!row) {
+          return;
+        }
+        if (thresholdSaveTimers.has(row.dataset.thresholdRow)) {
+          clearTimeout(thresholdSaveTimers.get(row.dataset.thresholdRow));
+          thresholdSaveTimers.delete(row.dataset.thresholdRow);
+        }
+        saveThreshold(row.dataset.thresholdRow);
+      });
     });
   }
 
@@ -485,7 +517,13 @@
     }
 
     socketBound = true;
-    socket.on("connect", () => updateSocketStatus(true));
+    socket.on("connect", () => {
+      updateSocketStatus(true);
+      if (hasSocketConnected && !isEditingThresholds()) {
+        loadThresholds();
+      }
+      hasSocketConnected = true;
+    });
     socket.on("disconnect", () => updateSocketStatus(false));
     socket.on("connect_error", () => updateSocketStatus(false));
     updateSocketStatus(Boolean(socket.connected));
