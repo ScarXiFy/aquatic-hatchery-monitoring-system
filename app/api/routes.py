@@ -1,7 +1,14 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app.api.piUtils import sourceValveState, drainValveState
 
-from app.models import get_history, get_latest_reading, get_thresholds, update_thresholds
+from app.models import (
+    get_history,
+    get_latest_reading,
+    get_thresholds,
+    update_thresholds,
+    get_control_settings,
+    update_control_settings
+)
 
 api_bp = Blueprint("api", __name__)
 
@@ -28,7 +35,12 @@ def readings_history():
     range_name = request.args.get("range", "day")
     if range_name not in {"day", "week"}:
         return jsonify({"error": "range must be day or week"}), 400
-    return jsonify({"range": range_name, "readings": get_history(range_name)})
+    mode = current_app.config.get("TRENDS_MODE", "last_24h")
+    return jsonify({
+        "range": range_name,
+        "mode": mode,
+        "readings": get_history(range_name, mode=mode)
+    })
 
 
 @api_bp.get("/thresholds")
@@ -88,10 +100,42 @@ def set_valve(name):
     return ("", 204)
 
 
+@api_bp.get("/controls")
+def get_controls():
+    db_sliders = get_control_settings()
+    defaults = {
+        "temperature_setpoint": 26.0,
+        "dissolved_oxygen_setpoint": 7.2,
+        "led_intensity": 1000.0
+    }
+    updated = False
+    for key, default in defaults.items():
+        if key not in db_sliders:
+            db_sliders[key] = default
+            updated = True
+    if updated:
+        db_sliders = update_control_settings(db_sliders)
+        
+    return jsonify({
+        "valves": CONTROL_STATE["valves"],
+        "sliders": db_sliders
+    })
+
+
 @api_bp.post("/controls/sliders")
 def set_sliders():
     payload = request.get_json(silent=True) or {}
-    for key in CONTROL_STATE["sliders"]:
+    updates = {}
+    for key in ["temperature_setpoint", "dissolved_oxygen_setpoint", "led_intensity"]:
         if key in payload:
-            CONTROL_STATE["sliders"][key] = float(payload[key])
-    return jsonify({"sliders": CONTROL_STATE["sliders"]})
+            updates[key] = float(payload[key])
+            
+    if updates:
+        db_sliders = update_control_settings(updates)
+    else:
+        db_sliders = get_control_settings()
+        
+    for key, val in db_sliders.items():
+        CONTROL_STATE["sliders"][key] = val
+        
+    return jsonify({"sliders": db_sliders})

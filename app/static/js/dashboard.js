@@ -30,7 +30,13 @@
     if (!config || value === null || value === undefined || Number.isNaN(Number(value))) {
       return "--";
     }
-    const formatted = Number(value).toFixed(config.decimals);
+    let formatted;
+    const num = Number(value);
+    if (metric === "temperature") {
+      formatted = num % 1 === 0 ? num.toFixed(0) : num.toFixed(1);
+    } else {
+      formatted = num.toFixed(config.decimals);
+    }
     return includeUnit && config.unit ? `${formatted} ${config.unit}` : formatted;
   }
 
@@ -318,6 +324,39 @@
     );
   }
 
+  function updateSliders(sliders) {
+    if (!sliders) return;
+    const tempSlider = document.querySelector('[data-control-slider="temperature_setpoint"]');
+    if (tempSlider && sliders.temperature_setpoint !== undefined) {
+      tempSlider.value = sliders.temperature_setpoint;
+      updateControlState(tempSlider);
+      updateSliderOutput(tempSlider);
+    }
+    const doSlider = document.querySelector('[data-control-slider="dissolved_oxygen_setpoint"]');
+    if (doSlider && sliders.dissolved_oxygen_setpoint !== undefined) {
+      doSlider.value = sliders.dissolved_oxygen_setpoint;
+      updateControlState(doSlider);
+      updateSliderOutput(doSlider);
+    }
+    const ledSlider = document.querySelector('[data-control-slider="led_intensity"]');
+    if (ledSlider && sliders.led_intensity !== undefined) {
+      const index = ledLevels.indexOf(sliders.led_intensity);
+      if (index !== -1) {
+        ledSlider.value = index;
+      }
+      updateControlState(ledSlider);
+      updateSliderOutput(ledSlider);
+    }
+  }
+
+  async function loadControls() {
+    const response = await fetch("/api/controls");
+    const payload = await response.json();
+    if (payload.sliders) {
+      updateSliders(payload.sliders);
+    }
+  }
+
   async function loadLatestReading() {
     const response = await fetch("/api/readings/latest");
     const payload = await response.json();
@@ -431,10 +470,12 @@
   function sliderDisplay(slider) {
     const key = slider.dataset.controlSlider;
     if (key === "temperature_setpoint") {
-      return `${Number(slider.value).toFixed(0)}°C`;
+      const val = Number(slider.value);
+      return val % 1 === 0 ? `${val}°C` : `${val.toFixed(1)}°C`;
     }
     if (key === "dissolved_oxygen_setpoint") {
-      return `${Number(slider.value).toFixed(1)} mg/L`;
+      const val = Number(slider.value);
+      return `${val.toFixed(1)} mg/L`;
     }
     if (key === "led_intensity") {
       return `${ledLevels[Number(slider.value)]} lx`;
@@ -463,14 +504,19 @@
   async function postSliderState() {
     const payload = {};
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
-      updateControlState(slider);
       payload[slider.dataset.controlSlider] = sliderPayloadValue(slider);
     });
-    await fetch("/api/controls/sliders", {
+    const response = await fetch("/api/controls/sliders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.sliders) {
+        updateSliders(data.sliders);
+      }
+    }
   }
 
   function bindControls() {
@@ -529,6 +575,32 @@
     updateSocketStatus(Boolean(socket.connected));
     socket.on("sensor_update", (reading) => {
       updateGauges(reading);
+      
+      if (reading && reading.id !== undefined && reading.timestamp) {
+        dayHistory.push(reading);
+        const now = new Date();
+        if (window.TRENDS_MODE === "yesterday") {
+          const yesterdayStart = new Date(now);
+          yesterdayStart.setDate(yesterdayStart.getDate() - 1);
+          yesterdayStart.setHours(0, 0, 0, 0);
+          
+          const yesterdayEnd = new Date(now);
+          yesterdayEnd.setDate(yesterdayEnd.getDate() - 1);
+          yesterdayEnd.setHours(23, 59, 59, 999);
+          
+          dayHistory = dayHistory.filter((r) => {
+            const t = new Date(r.timestamp);
+            return t >= yesterdayStart && t <= yesterdayEnd;
+          });
+        } else {
+          const limit = now.getTime() - 24 * 60 * 60 * 1000;
+          dayHistory = dayHistory.filter((r) => new Date(r.timestamp).getTime() >= limit);
+        }
+        renderTrends();
+      } else {
+        loadDayHistory();
+      }
+      
       if (document.querySelector('[data-page="graph"]')) {
         window.dispatchEvent(new CustomEvent("hatchery:reading", { detail: reading }));
       }
@@ -539,7 +611,9 @@
     updateDateTime();
     setInterval(updateDateTime, 30000);
     bindControls();
-    loadThresholds().then(loadLatestReading);
+    loadControls()
+      .then(loadThresholds)
+      .then(loadLatestReading);
     loadDayHistory().then(scheduleMidnightTrendRefresh);
     bindSocket();
   });

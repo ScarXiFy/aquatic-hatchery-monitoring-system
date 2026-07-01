@@ -12,6 +12,9 @@ def create_app(config_class=Config):
     app.config.from_object(config_class)
 
     init_db(app)
+    with app.app_context():
+        from app.models import init_system_controls
+        init_system_controls()
     app.teardown_appcontext(close_db)
 
     from app.api.routes import api_bp

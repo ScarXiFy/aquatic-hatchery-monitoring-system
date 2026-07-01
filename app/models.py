@@ -71,19 +71,121 @@ def get_latest_reading():
     return row_to_reading(row) if row else None
 
 
-def get_history(range_name="day"):
-    hours = 168 if range_name == "week" else 24
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+def get_history(range_name="day", mode="last_24h"):
+    if range_name == "week":
+        until = datetime.now(timezone.utc)
+        since = until - timedelta(hours=168)
+        start_str = since.isoformat(timespec="seconds")
+        end_str = until.isoformat(timespec="seconds")
+    else:  # "day"
+        if mode == "yesterday":
+            # Yesterday 12:00:00 AM to Yesterday 11:59:59 PM local time
+            local_now = datetime.now().astimezone()
+            yesterday_date = (local_now - timedelta(days=1)).date()
+            start_local = datetime.combine(yesterday_date, datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+            end_local = datetime.combine(yesterday_date, datetime.max.time()).replace(tzinfo=local_now.tzinfo)
+            
+            start_utc = start_local.astimezone(timezone.utc)
+            end_utc = end_local.astimezone(timezone.utc)
+            
+            start_str = start_utc.isoformat(timespec="seconds")
+            end_str = end_utc.isoformat(timespec="seconds")
+        else:  # "last_24h"
+            until = datetime.now(timezone.utc)
+            since = until - timedelta(hours=24)
+            start_str = since.isoformat(timespec="seconds")
+            end_str = until.isoformat(timespec="seconds")
+
     rows = get_db().execute(
         """
         SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph
         FROM sensor_readings
-        WHERE timestamp >= ?
-        ORDER BY timestamp ASC, id ASC
+        WHERE datetime(timestamp) >= datetime(?)
+          AND datetime(timestamp) <= datetime(?)
+          AND temperature IS NOT NULL AND temperature != ''
+          AND dissolved_oxygen IS NOT NULL AND dissolved_oxygen != ''
+          AND salinity IS NOT NULL AND salinity != ''
+          AND ph IS NOT NULL AND ph != ''
+        ORDER BY datetime(timestamp) ASC, id ASC
         """,
-        (since.isoformat(timespec="seconds"),),
+        (start_str, end_str),
     ).fetchall()
     return [row_to_reading(row) for row in rows]
+
+
+def get_control_settings():
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT metric, min_value FROM thresholds 
+        WHERE metric IN ('temperature', 'dissolved_oxygen', 'led_intensity')
+        """
+    ).fetchall()
+    res = {}
+    for row in rows:
+        if row["metric"] == "temperature":
+            res["temperature_setpoint"] = row["min_value"]
+        elif row["metric"] == "dissolved_oxygen":
+            res["dissolved_oxygen_setpoint"] = row["min_value"]
+        elif row["metric"] == "led_intensity":
+            res["led_intensity"] = row["min_value"]
+    return res
+
+
+def update_control_settings(updates):
+    db = get_db()
+    for metric, value in updates.items():
+        if metric == "temperature_setpoint":
+            db.execute(
+                "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'temperature'",
+                (float(value), float(value))
+            )
+        elif metric == "dissolved_oxygen_setpoint":
+            db.execute(
+                "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'dissolved_oxygen'",
+                (float(value), float(value))
+            )
+        elif metric == "led_intensity":
+            db.execute(
+                """
+                INSERT INTO thresholds (metric, min_value, max_value)
+                VALUES ('led_intensity', ?, ?)
+                ON CONFLICT(metric) DO UPDATE SET min_value = excluded.min_value, max_value = excluded.max_value
+                """,
+                (float(value), float(value))
+            )
+    db.commit()
+    return get_control_settings()
+
+
+def init_system_controls():
+    db = get_db()
+    ensure_default_thresholds()
+    
+    # Check if led_intensity exists in thresholds (our initialization marker)
+    row = db.execute("SELECT 1 FROM thresholds WHERE metric = 'led_intensity'").fetchone()
+    if row:
+        return  # Already initialized
+        
+    latest = get_latest_reading()
+    if latest:
+        # Initialize using the latest corresponding sensor reading
+        temp_init = latest["temperature"]
+        do_init = latest["dissolved_oxygen"]
+        db.execute(
+            "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'temperature'",
+            (float(temp_init), float(temp_init))
+        )
+        db.execute(
+            "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'dissolved_oxygen'",
+            (float(do_init), float(do_init))
+        )
+    
+    # Always insert led_intensity as it is the marker and needs a default
+    db.execute(
+        "INSERT INTO thresholds (metric, min_value, max_value) VALUES ('led_intensity', 1000.0, 1000.0)"
+    )
+    db.commit()
 
 
 def get_thresholds():
