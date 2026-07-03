@@ -1056,3 +1056,10 @@ input.threshold-input {
     animation-iteration-count: 1 !important;
   }
 }
+
+.trend-date-label {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.7);
+  letter-spacing: 0.03em;
+}

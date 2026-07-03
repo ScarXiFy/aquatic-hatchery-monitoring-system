@@ -226,3 +226,63 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
         print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")
         doSolenoidValve(doSolenoidValveOpen)
         doBleedValve(doBleedValvePercent)
+
+
+# ---------------------------------------------------------------------------
+# DS18B20 temperature sensor (1-Wire, RPi only)
+# ---------------------------------------------------------------------------
+
+_temp_device_file = None
+
+if isRpiPresent:
+    import os as _os
+    import glob as _glob
+
+    _os.system("modprobe w1-gpio")
+    _os.system("modprobe w1-therm")
+
+    _base_dir = "/sys/bus/w1/devices/"
+    _matches = _glob.glob(_base_dir + "28*")
+    if _matches:
+        _temp_device_file = _matches[0] + "/w1_slave"
+        print(f"[RPI] DS18B20 sensor found: {_temp_device_file}")
+    else:
+        print("[RPI] DS18B20 sensor not found - temperature will fall back to simulation")
+
+
+def _read_temp_raw():
+    with open(_temp_device_file, "r") as f:
+        return f.readlines()
+
+
+def read_temp_sensor():
+    """
+    Read temperature (°C) from the DS18B20 1-Wire sensor.
+    Returns a float on RPi when the sensor is present, or None otherwise
+    (caller falls back to simulated value).
+    """
+    if not isRpiPresent or _temp_device_file is None:
+        print("[DUMMY] temperature sensor read — using simulated value")
+        return None
+
+    try:
+        lines = _read_temp_raw()
+        retries = 0
+        while lines[0].strip()[-3:] != "YES" and retries < 5:
+            import time as _time
+            _time.sleep(0.2)
+            lines = _read_temp_raw()
+            retries += 1
+
+        equals_pos = lines[1].find("t=")
+        if equals_pos == -1:
+            print("[RPI] DS18B20 error - using simulated value")
+            return None
+
+        temp_c = float(lines[1][equals_pos+2:]) / 1000.0
+        print(f"[RPI] DS18B20 reading: {temp_c:.2f}C")
+        return round(temp_c, 2)
+
+    except Exception as e:
+        print(f"[RPI] DS18B20 read failed ({e}) - using simulated value")
+        return None
