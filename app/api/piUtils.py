@@ -1,3 +1,4 @@
+import random
 # TEMPORARY PIN PLACEMENTS
 sourceValvePin = 18
 drainValvePin = 16
@@ -172,31 +173,57 @@ TEMP_TOLERANCE = 0.5   # degC either side of setpoint
 DO_TOLERANCE   = 0.3   # mg/L either side of setpoint
 
 
-def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE):
+def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
     """
-    High temp  (reading > setpoint + tolerance) -> enable cooling system + open cooling valve.
-    Low temp   (reading < setpoint - tolerance) -> enable heating system + open heating valve.
-    Stable     (within tolerance band)          -> disable both systems and close both valves.
+    Uses the main tank reading to detect whether a threshold has been crossed.
+    Once triggered, uses the secondary sensor reading (heater/chiller output line)
+    to drive the heating/cooling actuators. Falls back to a simulated secondary
+    value if the secondary sensor is not connected.
+
+    High temp  (tank > setpoint + tolerance) -> enable cooling system + open cooling valve.
+    Low temp   (tank < setpoint - tolerance) -> enable heating system + open heating valve.
+    Stable     (within tolerance band)       -> disable both systems and close both valves.
     """
     high = setpoint + tolerance
     low  = setpoint - tolerance
 
+    # Resolve secondary temperature: use provided value, then try sensor, then simulate
+    if secondary_temp is None:
+        secondary_temp = read_secondary_temp_sensor()
+    if secondary_temp is None:
+        secondary_temp = round(temperature + random.uniform(-0.5, 0.5), 2)
+        print(f"[DUMMY] secondary temperature simulated as {secondary_temp}C")
+
     if temperature > high:
-        print(f"[CONTROL] Temperature HIGH ({temperature}C > {high}C, setpoint {setpoint}C) - activating cooling")
-        heatingSystem(False)
-        heatingValve(False)
-        coolingSystem(True)
-        coolingValve(True)
+        if secondary_temp > high:
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | secondary: {secondary_temp}C - activating cooling")
+            heatingSystem(False)
+            heatingValve(False)
+            coolingSystem(True)
+            coolingValve(True)
+        elif secondary_temp < low:
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | secondary: {secondary_temp}C - activating heating")
+            coolingSystem(False)
+            coolingValve(False)
+            heatingSystem(True)
+            heatingValve(True)
 
     elif temperature < low:
-        print(f"[CONTROL] Temperature LOW ({temperature}C < {low}C, setpoint {setpoint}C) - activating heating")
-        coolingSystem(False)
-        coolingValve(False)
-        heatingSystem(True)
-        heatingValve(True)
+        if secondary_temp > high:
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | secondary: {secondary_temp}C - activating cooling")
+            heatingSystem(False)
+            heatingValve(False)
+            coolingSystem(True)
+            coolingValve(True)
+        elif secondary_temp < low:
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | secondary: {secondary_temp}C - activating heating")
+            coolingSystem(False)
+            coolingValve(False)
+            heatingSystem(True)
+            heatingValve(True)
 
     else:
-        print(f"[CONTROL] Temperature STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
+        print(f"[CONTROL] Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
         coolingSystem(False)
         coolingValve(False)
         heatingSystem(False)
@@ -233,6 +260,7 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
 # ---------------------------------------------------------------------------
 
 _temp_device_file = None
+_temp_secondary_device_file = None
 
 if isRpiPresent:
     import os as _os
@@ -242,17 +270,44 @@ if isRpiPresent:
     _os.system("modprobe w1-therm")
 
     _base_dir = "/sys/bus/w1/devices/"
-    _matches = _glob.glob(_base_dir + "28*")
-    if _matches:
-        _temp_device_file = _matches[0] + "/w1_slave"
-        print(f"[RPI] DS18B20 sensor found: {_temp_device_file}")
+    _temp_device_file = _base_dir + "28-7cf4d4452c40" + "/w1_slave"
+    _temp_secondary_device_file = _base_dir + "28-yyyyyyyyyyyy" + "/w1_slave"
+    if _os.path.exists(_temp_device_file):
+        print(f"[RPI] DS18B20 primary sensor found: {_temp_device_file}")
     else:
-        print("[RPI] DS18B20 sensor not found - temperature will fall back to simulation")
+        _temp_device_file = None
+        print("[RPI] DS18B20 primary sensor not found - temperature will fall back to simulation")
+
+    if _os.path.exists(_temp_secondary_device_file):
+        print(f"[RPI] DS18B20 secondary sensor found: {_temp_secondary_device_file}")
+    else:
+        _temp_secondary_device_file = None
+        print("[RPI] DS18B20 secondary sensor not found - secondary temperature will use simulated value")
 
 
 def _read_temp_raw():
     with open(_temp_device_file, "r") as f:
         return f.readlines()
+
+
+def _parse_ds18b20(device_file: str, label: str):
+    """Shared DS18B20 read-and-parse logic."""
+    import time as _time
+    with open(device_file, "r") as f:
+        lines = f.readlines()
+    retries = 0
+    while lines[0].strip()[-3:] != "YES" and retries < 5:
+        _time.sleep(0.2)
+        with open(device_file, "r") as f:
+            lines = f.readlines()
+        retries += 1
+    equals_pos = lines[1].find("t=")
+    if equals_pos == -1:
+        print(f"[RPI] {label} DS18B20 parse error - using simulated value")
+        return None
+    temp_c = float(lines[1][equals_pos + 2:]) / 1000.0
+    print(f"[RPI] {label} DS18B20 reading: {temp_c:.2f}°C")
+    return round(temp_c, 2)
 
 
 def read_temp_sensor():
@@ -262,27 +317,27 @@ def read_temp_sensor():
     (then use simulated value).
     """
     if not isRpiPresent or _temp_device_file is None:
-        print("[DUMMY] temperature sensor read - using simulated value")
+        print("[DUMMY] primary temperature sensor read - using simulated value")
+        return None
+    try:
+        return _parse_ds18b20(_temp_device_file, "primary")
+    except Exception as e:
+        print(f"[RPI] primary DS18B20 read failed ({e}) - using simulated value")
         return None
 
+
+def read_secondary_temp_sensor():
+    """
+    Read temperature (C) from the secondary DS18B20 1-Wire sensor
+    (heater/chiller output line).
+    Returns a float on RPi when the sensor is present, or None otherwise
+    (caller falls back to simulated value).
+    """
+    if not isRpiPresent or _temp_secondary_device_file is None:
+        print("[DUMMY] secondary temperature sensor read - using simulated value")
+        return None
     try:
-        lines = _read_temp_raw()
-        retries = 0
-        while lines[0].strip()[-3:] != "YES" and retries < 5:
-            import time as _time
-            _time.sleep(0.2)
-            lines = _read_temp_raw()
-            retries += 1
-
-        equals_pos = lines[1].find("t=")
-        if equals_pos == -1:
-            print("[RPI] DS18B20 error - using simulated value")
-            return None
-
-        temp_c = float(lines[1][equals_pos+2:]) / 1000.0
-        print(f"[RPI] DS18B20 reading: {temp_c:.2f}C")
-        return round(temp_c, 2)
-
+        return _parse_ds18b20(_temp_secondary_device_file, "secondary")
     except Exception as e:
-        print(f"[RPI] DS18B20 read failed ({e}) - using simulated value")
+        print(f"[RPI] secondary DS18B20 read failed ({e}) - using simulated value")
         return None
