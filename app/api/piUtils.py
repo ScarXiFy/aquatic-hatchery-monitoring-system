@@ -270,8 +270,8 @@ if isRpiPresent:
     _os.system("modprobe w1-therm")
 
     _base_dir = "/sys/bus/w1/devices/"
-    _temp_device_file = _base_dir + "28-7cf4d4452c40" + "/w1_slave"
-    _temp_secondary_device_file = _base_dir + "28-yyyyyyyyyyyy" + "/w1_slave"
+    _temp_device_file = _base_dir + "28-000000b197bd" + "/w1_slave"
+    _temp_secondary_device_file = _base_dir + "28-000000b260f4" + "/w1_slave"
     if _os.path.exists(_temp_device_file):
         print(f"[RPI] DS18B20 primary sensor found: {_temp_device_file}")
     else:
