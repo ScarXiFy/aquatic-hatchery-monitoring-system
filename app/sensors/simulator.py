@@ -1,8 +1,8 @@
 import random
 from datetime import datetime, timezone
 
-from app.models import create_sensor_reading, get_latest_reading
-from app.api.piUtils import applyTemperatureControl, applyDissolvedOxygenControl, read_temp_sensor
+from app.models import create_sensor_reading, get_latest_reading, get_control_settings
+from app.api.piUtils import applyTemperatureControl, applyDissolvedOxygenControl, read_temp_sensor, read_secondary_temp_sensor
 from app.api.routes import CONTROL_STATE
 
 current_temp = None
@@ -20,10 +20,9 @@ def generate_sensor_reading():
         current_do = latest["dissolved_oxygen"] if latest else 7.2
         
     # Read target settings from database
-    target_temp = CONTROL_STATE["sliders"]["temperature_setpoint"]
-    target_do = CONTROL_STATE["sliders"]["dissolved_oxygen_setpoint"]
-    #target_temp = targets.get("temperature_setpoint", 26.0)
-    #target_do = targets.get("dissolved_oxygen_setpoint", 7.2)
+    targets = get_control_settings()
+    target_temp = targets.get("temperature_setpoint", 26.0)
+    target_do = targets.get("dissolved_oxygen_setpoint", 7.2)
     
     # Use real DS18B20 sensor on RPi; fall back to simulation otherwise
     sensor_temp = read_temp_sensor()
@@ -76,11 +75,12 @@ def start_sensor_simulator(socketio, app):
             socketio.emit("sensor_update", reading)
 
             # Keep CONTROL_STATE sliders updated for any other parts of the app
-            # targets = get_control_settings()
-            # for key, val in targets.items():
-            #    CONTROL_STATE["sliders"][key] = val
+            targets = get_control_settings()
+            for key, val in targets.items():
+                CONTROL_STATE["sliders"][key] = val
                 
-            applyTemperatureControl(reading["temperature"], CONTROL_STATE["sliders"]["temperature_setpoint"])
-            applyDissolvedOxygenControl(reading["dissolved_oxygen"], CONTROL_STATE["sliders"]["dissolved_oxygen_setpoint"])
+            secondary_temp = read_secondary_temp_sensor()
+            applyTemperatureControl(reading["temperature"], targets.get("temperature_setpoint", 26.0), secondary_temp=secondary_temp)
+            applyDissolvedOxygenControl(reading["dissolved_oxygen"], targets.get("dissolved_oxygen_setpoint", 7.2))
 
             socketio.sleep(interval)
