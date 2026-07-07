@@ -257,12 +257,12 @@ def _read_temp_raw():
 
 def read_temp_sensor():
     """
-    Read temperature (°C) from the DS18B20 1-Wire sensor.
+    Read temperature (C) from the DS18B20 1-Wire sensor.
     Returns a float on RPi when the sensor is present, or None otherwise
-    (caller falls back to simulated value).
+    (then use simulated value).
     """
     if not isRpiPresent or _temp_device_file is None:
-        print("[DUMMY] temperature sensor read — using simulated value")
+        print("[DUMMY] temperature sensor read - using simulated value")
         return None
 
     try:
