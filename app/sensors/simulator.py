@@ -67,7 +67,8 @@ def generate_sensor_reading():
             pass
             
     if ph is None:
-        ph = round(random.uniform(7.6, 8.3), 2)
+        print(f"[DUMMY] pH sensor failed to initialize - using simulated pH readings")
+        ph = round(random.uniform(6, 9), 2)
     
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),

@@ -12,7 +12,7 @@ try:
     CIRCUITPYTHON_AVAILABLE = True
 except ImportError:
     CIRCUITPYTHON_AVAILABLE = False
-    logger.warning("CircuitPython/ADS1115 libraries not present. Running in simulated mode.")
+    logger.warning("ADS1115 libraries not present. Running in simulated mode.")
 
 
 class ADCService:
@@ -46,7 +46,6 @@ class ADCService:
                 if current_app:
                     address = current_app.config.get("ADS1115_ADDRESS", 0x48)
             except RuntimeError:
-                # Outside app context, e.g. in tests
                 pass
 
             # Initialize I2C bus and ADS1115
@@ -73,10 +72,10 @@ class ADCService:
             return self.channels[channel_num]
 
         ads_channels = {
-            0: ADS.P0,
-            1: ADS.P1,
-            2: ADS.P2,
-            3: ADS.P3
+            0: 0,
+            1: 1,
+            2: 2,
+            3: 3
         }
 
         if channel_num not in ads_channels:

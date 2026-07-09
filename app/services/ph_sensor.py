@@ -44,5 +44,5 @@ class PHSensorService:
             
             return round(ph_clamped, 2)
         except Exception:
-            logger.exception("Failed to read PH4502C sensor")
+            logger.exception("Failed to read PH sensor")
             return None
