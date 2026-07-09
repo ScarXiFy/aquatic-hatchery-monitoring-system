@@ -223,7 +223,7 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(True)
 
     else:
-        print(f"[CONTROL] Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
+        print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
         coolingSystem(False)
         coolingValve(False)
         heatingSystem(False)
