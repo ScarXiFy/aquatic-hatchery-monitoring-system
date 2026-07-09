@@ -176,9 +176,9 @@ DO_TOLERANCE   = 0.3   # mg/L either side of setpoint
 def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
     """
     Uses the main tank reading to detect whether a threshold has been crossed.
-    Once triggered, uses the secondary sensor reading (heater/chiller output line)
-    to drive the heating/cooling actuators. Falls back to a simulated secondary
-    value if the secondary sensor is not connected.
+    Once triggered, uses the Mixing sensor reading (heater/chiller output line)
+    to drive the heating/cooling actuators. Falls back to a simulated Mixing tank temp
+    value if the Mixing sensor is not connected.
 
     High temp  (tank > setpoint + tolerance) -> enable cooling system + open cooling valve.
     Low temp   (tank < setpoint - tolerance) -> enable heating system + open heating valve.
@@ -192,17 +192,17 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
         secondary_temp = read_secondary_temp_sensor()
     if secondary_temp is None:
         secondary_temp = round(temperature + random.uniform(-0.5, 0.5), 2)
-        print(f"[DUMMY] secondary temperature simulated as {secondary_temp}C")
+        print(f"[DUMMY] Mixing temperature simulated as {secondary_temp}C")
 
     if temperature > high:
         if secondary_temp > high:
-            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | secondary: {secondary_temp}C - activating cooling")
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating cooling")
             heatingSystem(False)
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
         elif secondary_temp < low:
-            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | secondary: {secondary_temp}C - activating heating")
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
@@ -210,13 +210,13 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
 
     elif temperature < low:
         if secondary_temp > high:
-            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | secondary: {secondary_temp}C - activating cooling")
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating cooling")
             heatingSystem(False)
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
         elif secondary_temp < low:
-            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | secondary: {secondary_temp}C - activating heating")
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
@@ -273,16 +273,16 @@ if isRpiPresent:
     _temp_device_file = _base_dir + "28-000000b197bd" + "/w1_slave"
     _temp_secondary_device_file = _base_dir + "28-000000b260f4" + "/w1_slave"
     if _os.path.exists(_temp_device_file):
-        print(f"[RPI] DS18B20 primary sensor found: {_temp_device_file}")
+        print(f"[RPI] DS18B20 Main tank sensor found: {_temp_device_file}")
     else:
         _temp_device_file = None
-        print("[RPI] DS18B20 primary sensor not found - temperature will fall back to simulation")
+        print("[RPI] DS18B20 Main tank sensor not found - Main tank temperature will fall back to simulation")
 
     if _os.path.exists(_temp_secondary_device_file):
-        print(f"[RPI] DS18B20 secondary sensor found: {_temp_secondary_device_file}")
+        print(f"[RPI] DS18B20 Mixing sensor found: {_temp_secondary_device_file}")
     else:
         _temp_secondary_device_file = None
-        print("[RPI] DS18B20 secondary sensor not found - secondary temperature will use simulated value")
+        print("[RPI] DS18B20 Mixing sensor not found - Mixing temperature will use simulated value")
 
 
 def _read_temp_raw():
@@ -306,38 +306,35 @@ def _parse_ds18b20(device_file: str, label: str):
         print(f"[RPI] {label} DS18B20 parse error - using simulated value")
         return None
     temp_c = float(lines[1][equals_pos + 2:]) / 1000.0
-    print(f"[RPI] {label} DS18B20 reading: {temp_c:.2f}°C")
+    print(f"[RPI] {label} DS18B20 reading: {temp_c:.2f}C")
     return round(temp_c, 2)
 
 
 def read_temp_sensor():
     """
     Read temperature (C) from the DS18B20 1-Wire sensor.
-    Returns a float on RPi when the sensor is present, or None otherwise
-    (then use simulated value).
+    Returns a float on RPi when the sensor is present, or None otherwise (then use simulated value).
     """
     if not isRpiPresent or _temp_device_file is None:
-        print("[DUMMY] primary temperature sensor read - using simulated value")
+        print("[DUMMY] Main Tank temperature sensor read - using simulated value")
         return None
     try:
         return _parse_ds18b20(_temp_device_file, "primary")
     except Exception as e:
-        print(f"[RPI] primary DS18B20 read failed ({e}) - using simulated value")
+        print(f"[RPI] Main Tank DS18B20 read failed ({e}) - using simulated value")
         return None
 
 
 def read_secondary_temp_sensor():
     """
-    Read temperature (C) from the secondary DS18B20 1-Wire sensor
-    (heater/chiller output line).
-    Returns a float on RPi when the sensor is present, or None otherwise
-    (caller falls back to simulated value).
+    Read temperature (C) from the Mixing tank DS18B20 1-Wire sensor.
+    Returns a float on RPi when the sensor is present, or None otherwise (then use simulated value).
     """
     if not isRpiPresent or _temp_secondary_device_file is None:
-        print("[DUMMY] secondary temperature sensor read - using simulated value")
+        print("[DUMMY] Mixing tank temperature sensor read - using simulated value")
         return None
     try:
         return _parse_ds18b20(_temp_secondary_device_file, "secondary")
     except Exception as e:
-        print(f"[RPI] secondary DS18B20 read failed ({e}) - using simulated value")
+        print(f"[RPI] Mixing tank DS18B20 read failed ({e}) - using simulated value")
         return None
