@@ -41,7 +41,7 @@ class PHSensorService:
 
             # Clamp the final result between PH_MIN and PH_MAX
             ph_clamped = max(ph_min, min(ph_max, ph))
-            
+            print(f"[RPI] pH sensor reading - {ph_clamped} at voltage {voltage}V")
             return round(ph_clamped, 2)
         except Exception:
             logger.exception("Failed to read PH sensor")
