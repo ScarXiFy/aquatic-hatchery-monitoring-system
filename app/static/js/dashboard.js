@@ -68,27 +68,41 @@
   }
 
   function conditionFor(metric, value) {
-    const threshold = thresholdFor(metric);
+    const threshold = thresholds.find((item) => item.metric === metric);
     if (!threshold || value === null || value === undefined || Number.isNaN(Number(value))) {
       return "neutral";
     }
 
-    const numericValue = Number(value);
+    const v = Number(value);
     const min = Number(threshold.min_value);
     const max = Number(threshold.max_value);
-    if (numericValue < min || numericValue > max) {
-      return "critical";
+    if (Number.isNaN(min) || Number.isNaN(max)) {
+      return "neutral";
     }
 
-    const range = max - min;
-    if (range <= 0) {
-      return numericValue === min ? "optimal" : "critical";
+    if (min === max) {
+      const limit = max;
+      const warning_limit = metric === "temperature" ? 0.5 : 0.3;
+      const critical_limit = metric === "temperature" ? 2.0 : 1.0;
+      const diff = Math.abs(v - limit);
+      if (diff >= critical_limit) {
+        return "critical";
+      }
+      if (diff >= warning_limit) {
+        return "warning";
+      }
+      return "optimal";
+    } else {
+      const range = max - min;
+      const buffer = range * 0.10;
+      if (v < min || v > max) {
+        return "critical";
+      }
+      if (v <= min + buffer || v >= max - buffer) {
+        return "warning";
+      }
+      return "optimal";
     }
-
-    const warningSize = range * 0.2;
-    const inLowerWarningZone = numericValue >= min && numericValue <= min + warningSize;
-    const inUpperWarningZone = numericValue <= max && numericValue >= max - warningSize;
-    return inLowerWarningZone || inUpperWarningZone ? "warning" : "optimal";
   }
 
   function updateDateTime() {
@@ -511,7 +525,25 @@
   }
 
   function updateControlState(slider) {
-    controlState[slider.dataset.controlSlider] = sliderPayloadValue(slider);
+    const key = slider.dataset.controlSlider;
+    const value = sliderPayloadValue(slider);
+    controlState[key] = value;
+
+    if (key === "temperature_setpoint") {
+      const item = thresholds.find((t) => t.metric === "temperature");
+      if (item) {
+        item.min_value = value;
+        item.max_value = value;
+        window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+      }
+    } else if (key === "dissolved_oxygen_setpoint") {
+      const item = thresholds.find((t) => t.metric === "dissolved_oxygen");
+      if (item) {
+        item.min_value = value;
+        item.max_value = value;
+        window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+      }
+    }
   }
 
   function updateSliderOutput(slider) {

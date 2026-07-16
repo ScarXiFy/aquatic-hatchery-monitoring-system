@@ -64,19 +64,65 @@
       const yScale = scales.y;
       if (!chartArea || !yScale) return;
 
-      const safeMin = Math.max(config.min, Number(limits.min_value));
-      const safeMax = Math.min(config.max, Number(limits.max_value));
-      if (Number.isNaN(safeMin) || Number.isNaN(safeMax) || safeMin >= safeMax) return;
-
-      const safeTop = yScale.getPixelForValue(safeMax);
-      const safeBottom = yScale.getPixelForValue(safeMin);
+      const min = Number(limits.min_value);
+      const max = Number(limits.max_value);
+      if (Number.isNaN(min) || Number.isNaN(max)) return;
 
       ctx.save();
-      ctx.fillStyle = "rgba(16, 185, 129, 0.24)";
-      ctx.fillRect(chartArea.left, safeTop, chartArea.right - chartArea.left, safeBottom - safeTop);
-      ctx.fillStyle = "rgba(251, 191, 36, 0.07)";
-      ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, safeTop - chartArea.top);
-      ctx.fillRect(chartArea.left, safeBottom, chartArea.right - chartArea.left, chartArea.bottom - safeBottom);
+
+      if (min === max) {
+        // Temperature and DO: setpoint tracking
+        const limit = max;
+        const warning_limit = metric === "temperature" ? 0.5 : 0.3;
+        const critical_limit = metric === "temperature" ? 2.0 : 1.0;
+
+        const optTop = yScale.getPixelForValue(limit + warning_limit);
+        const optBottom = yScale.getPixelForValue(limit - warning_limit);
+        const limitTop = yScale.getPixelForValue(limit + critical_limit);
+        const limitBottom = yScale.getPixelForValue(limit - critical_limit);
+
+        // Green zone: within warning_limit of setpoint
+        ctx.fillStyle = "rgba(16, 185, 129, 0.16)";
+        ctx.fillRect(chartArea.left, optTop, chartArea.right - chartArea.left, optBottom - optTop);
+        
+        // Yellow warning zones:
+        ctx.fillStyle = "rgba(251, 191, 36, 0.12)";
+        ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
+        ctx.fillRect(chartArea.left, limitTop, chartArea.right - chartArea.left, optTop - limitTop);
+
+        // Red critical zones:
+        ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, limitTop - chartArea.top);
+        ctx.fillRect(chartArea.left, limitBottom, chartArea.right - chartArea.left, chartArea.bottom - limitBottom);
+      } else {
+        // Salinity and pH: range [min, max]
+        const range = max - min;
+        const buffer = range * 0.10;
+
+        const optTop = yScale.getPixelForValue(max - buffer);
+        const optBottom = yScale.getPixelForValue(min + buffer);
+        const limitTop = yScale.getPixelForValue(max);
+        const limitBottom = yScale.getPixelForValue(min);
+
+        // Green zone: between min + buffer and max - buffer
+        ctx.fillStyle = "rgba(16, 185, 129, 0.16)";
+        ctx.fillRect(chartArea.left, optTop, chartArea.right - chartArea.left, optBottom - optTop);
+
+        // Yellow warning zones:
+        // Lower warning: between min and min + buffer
+        // Upper warning: between max - buffer and max
+        ctx.fillStyle = "rgba(251, 191, 36, 0.12)";
+        ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
+        ctx.fillRect(chartArea.left, limitTop, chartArea.right - chartArea.left, optTop - limitTop);
+
+        // Red critical zones:
+        // Below min
+        // Above max
+        ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, limitTop - chartArea.top);
+        ctx.fillRect(chartArea.left, limitBottom, chartArea.right - chartArea.left, chartArea.bottom - limitBottom);
+      }
+
       ctx.restore();
     },
   };
@@ -116,15 +162,34 @@
     const min = Number(limits.min_value);
     const max = Number(limits.max_value);
     if (Number.isNaN(min) || Number.isNaN(max)) return "neutral";
-    if (v < min || v > max) return "critical";
-    const range = max - min;
-    if (range <= 0) return "optimal";
-    const edge = range * 0.15;
-    return v <= min + edge || v >= max - edge ? "warning" : "optimal";
+
+    if (min === max) {
+      const limit = max;
+      const warning_limit = metric === "temperature" ? 0.5 : 0.3;
+      const critical_limit = metric === "temperature" ? 2.0 : 1.0;
+      const diff = Math.abs(v - limit);
+      if (diff >= critical_limit) {
+        return "critical";
+      }
+      if (diff >= warning_limit) {
+        return "warning";
+      }
+      return "optimal";
+    } else {
+      const range = max - min;
+      const buffer = range * 0.10;
+      if (v < min || v > max) {
+        return "critical";
+      }
+      if (v <= min + buffer || v >= max - buffer) {
+        return "warning";
+      }
+      return "optimal";
+    }
   }
 
   function conditionLabel(condition) {
-    return { optimal: "Normal", warning: "Warning", critical: "Critical", neutral: "—" }[condition] || "—";
+    return { optimal: "Optimal", warning: "Warning", critical: "Critical", neutral: "—" }[condition] || "—";
   }
 
   function buildDayPoints(readings) {
