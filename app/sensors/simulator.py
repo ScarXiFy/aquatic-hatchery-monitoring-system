@@ -2,7 +2,7 @@ import random
 from datetime import datetime, timezone
 
 from app.models import create_sensor_reading, get_latest_reading, get_control_settings
-from app.api.piUtils import applyTemperatureControl, applyDissolvedOxygenControl, read_temp_sensor, read_secondary_temp_sensor
+from app.api.piUtils import applyTemperatureControl, applyDissolvedOxygenControl, read_temp_sensor, read_secondary_temp_sensor, isRpiPresent
 from app.api.routes import CONTROL_STATE
 
 current_temp = None
@@ -56,7 +56,19 @@ def generate_sensor_reading():
     
     # Salinity and pH remain fluctuating around typical values
     salinity = round(random.uniform(29.0, 34.0), 2)
-    ph = round(random.uniform(7.6, 8.3), 2)
+    
+    ph = None
+    if isRpiPresent:
+        try:
+            from app.services.ph_sensor import PHSensorService
+            ph_sensor = PHSensorService()
+            ph = ph_sensor.read_ph()
+        except Exception:
+            pass
+            
+    if ph is None:
+        print(f"[DUMMY] pH sensor failed to initialize - using simulated pH readings")
+        ph = round(random.uniform(3, 5), 2)
     
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
