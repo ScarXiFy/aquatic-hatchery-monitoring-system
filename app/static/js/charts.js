@@ -82,16 +82,16 @@
         const limitBottom = yScale.getPixelForValue(limit - critical_limit);
 
         // Green zone: within warning_limit of setpoint
-        ctx.fillStyle = "rgba(16, 185, 129, 0.16)";
+        ctx.fillStyle = "rgba(16, 185, 129, 0.12)";
         ctx.fillRect(chartArea.left, optTop, chartArea.right - chartArea.left, optBottom - optTop);
         
         // Yellow warning zones:
-        ctx.fillStyle = "rgba(251, 191, 36, 0.12)";
+        ctx.fillStyle = "rgba(245, 158, 11, 0.22)";
         ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
         ctx.fillRect(chartArea.left, limitTop, chartArea.right - chartArea.left, optTop - limitTop);
 
         // Red critical zones:
-        ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        ctx.fillStyle = "rgba(244, 63, 94, 0.12)";
         ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, limitTop - chartArea.top);
         ctx.fillRect(chartArea.left, limitBottom, chartArea.right - chartArea.left, chartArea.bottom - limitBottom);
       } else {
@@ -105,20 +105,20 @@
         const limitBottom = yScale.getPixelForValue(min);
 
         // Green zone: between min + buffer and max - buffer
-        ctx.fillStyle = "rgba(16, 185, 129, 0.16)";
+        ctx.fillStyle = "rgba(16, 185, 129, 0.12)";
         ctx.fillRect(chartArea.left, optTop, chartArea.right - chartArea.left, optBottom - optTop);
 
         // Yellow warning zones:
         // Lower warning: between min and min + buffer
         // Upper warning: between max - buffer and max
-        ctx.fillStyle = "rgba(251, 191, 36, 0.12)";
+        ctx.fillStyle = "rgba(245, 158, 11, 0.22)";
         ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
         ctx.fillRect(chartArea.left, limitTop, chartArea.right - chartArea.left, optTop - limitTop);
 
         // Red critical zones:
         // Below min
         // Above max
-        ctx.fillStyle = "rgba(239, 68, 68, 0.08)";
+        ctx.fillStyle = "rgba(244, 63, 94, 0.12)";
         ctx.fillRect(chartArea.left, chartArea.top, chartArea.right - chartArea.left, limitTop - chartArea.top);
         ctx.fillRect(chartArea.left, limitBottom, chartArea.right - chartArea.left, chartArea.bottom - limitBottom);
       }
@@ -375,8 +375,8 @@
             label: config.label,
             data: [],
             borderColor: config.color,
-            backgroundColor: `${config.color}1a`,
-            fill: true,
+            backgroundColor: "transparent",
+            fill: false,
             borderWidth: 2.5,
             pointRadius: (context) => {
               if (context.datasetIndex !== 0) return 0;
