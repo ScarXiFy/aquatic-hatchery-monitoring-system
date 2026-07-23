@@ -90,63 +90,92 @@ class TestPHSensorService(unittest.TestCase):
         ph = service.read_ph()
         self.assertIsNone(ph)
         # Should log exception
-        mock_logger.exception.assert_called_with("Failed to read PH4502C sensor")
+        mock_logger.exception.assert_called_with("Failed to read PH sensor")
 
 
 class TestSimulatorIntegration(unittest.TestCase):
     @patch("app.sensors.simulator.isRpiPresent", False)
     @patch("app.services.ph_sensor.PHSensorService")
+    @patch("app.services.salinity_sensor.SalinitySensorService")
+    @patch("app.services.do_sensor.DOSensorService")
     @patch("app.sensors.simulator.get_latest_reading")
     @patch("app.sensors.simulator.get_control_settings")
     @patch("app.sensors.simulator.read_temp_sensor")
-    def test_rpi_disconnected_simulator(self, mock_temp, mock_settings, mock_latest, mock_ph_service_class):
+    def test_rpi_disconnected_simulator(self, mock_temp, mock_settings, mock_latest, mock_do_class, mock_sal_class, mock_ph_class):
         mock_settings.return_value = {"temperature_setpoint": 26.0, "dissolved_oxygen_setpoint": 7.2}
         mock_latest.return_value = {"temperature": 26.0, "dissolved_oxygen": 7.2}
         mock_temp.return_value = None
         
-        # Reset mock
-        mock_ph_service_class.reset_mock()
-
-        # When RPi is disconnected, PHSensorService should never be initialized or called
+        # When RPi is disconnected, hardware sensor services should never be initialized or called
         reading = generate_sensor_reading()
         
-        mock_ph_service_class.assert_not_called()
+        mock_ph_class.assert_not_called()
+        mock_sal_class.assert_not_called()
+        mock_do_class.assert_not_called()
         self.assertTrue(7.6 <= reading["ph"] <= 8.3)
+        self.assertTrue(29.0 <= reading["salinity"] <= 34.0)
 
     @patch("app.sensors.simulator.isRpiPresent", True)
     @patch("app.services.ph_sensor.PHSensorService")
+    @patch("app.services.salinity_sensor.SalinitySensorService")
+    @patch("app.services.do_sensor.DOSensorService")
     @patch("app.sensors.simulator.get_latest_reading")
     @patch("app.sensors.simulator.get_control_settings")
     @patch("app.sensors.simulator.read_temp_sensor")
-    def test_rpi_connected_sensor_available(self, mock_temp, mock_settings, mock_latest, mock_ph_service_class):
+    def test_rpi_connected_sensor_available(self, mock_temp, mock_settings, mock_latest, mock_do_class, mock_sal_class, mock_ph_class):
         mock_settings.return_value = {"temperature_setpoint": 26.0, "dissolved_oxygen_setpoint": 7.2}
         mock_latest.return_value = {"temperature": 26.0, "dissolved_oxygen": 7.2}
         mock_temp.return_value = None
         
-        # Mock service returning a valid physical reading
+        # Mock services returning valid physical readings
         mock_ph_service = MagicMock()
         mock_ph_service.read_ph.return_value = 8.12
-        mock_ph_service_class.return_value = mock_ph_service
+        mock_ph_class.return_value = mock_ph_service
+
+        mock_sal_service = MagicMock()
+        mock_sal_service.read_salinity.return_value = 32.50
+        mock_sal_class.return_value = mock_sal_service
+
+        mock_do_service = MagicMock()
+        mock_do_service.read_do.return_value = 7.15
+        mock_do_class.return_value = mock_do_service
         
         reading = generate_sensor_reading()
         self.assertEqual(reading["ph"], 8.12)
+        self.assertEqual(reading["salinity"], 32.50)
+        self.assertEqual(reading["dissolved_oxygen"], 7.15)
         mock_ph_service.read_ph.assert_called_once()
+        mock_sal_service.read_salinity.assert_called_once()
+        mock_do_service.read_do.assert_called_once()
 
     @patch("app.sensors.simulator.isRpiPresent", True)
     @patch("app.services.ph_sensor.PHSensorService")
+    @patch("app.services.salinity_sensor.SalinitySensorService")
+    @patch("app.services.do_sensor.DOSensorService")
     @patch("app.sensors.simulator.get_latest_reading")
     @patch("app.sensors.simulator.get_control_settings")
     @patch("app.sensors.simulator.read_temp_sensor")
-    def test_rpi_connected_sensor_failed(self, mock_temp, mock_settings, mock_latest, mock_ph_service_class):
+    def test_rpi_connected_sensor_failed(self, mock_temp, mock_settings, mock_latest, mock_do_class, mock_sal_class, mock_ph_class):
         mock_settings.return_value = {"temperature_setpoint": 26.0, "dissolved_oxygen_setpoint": 7.2}
         mock_latest.return_value = {"temperature": 26.0, "dissolved_oxygen": 7.2}
         mock_temp.return_value = None
         
-        # Mock service returning None on hardware failure
+        # Mock services returning None on hardware failure
         mock_ph_service = MagicMock()
         mock_ph_service.read_ph.return_value = None
-        mock_ph_service_class.return_value = mock_ph_service
+        mock_ph_class.return_value = mock_ph_service
+
+        mock_sal_service = MagicMock()
+        mock_sal_service.read_salinity.return_value = None
+        mock_sal_class.return_value = mock_sal_service
+
+        mock_do_service = MagicMock()
+        mock_do_service.read_do.return_value = None
+        mock_do_class.return_value = mock_do_service
         
         reading = generate_sensor_reading()
         self.assertTrue(7.6 <= reading["ph"] <= 8.3)
+        self.assertTrue(29.0 <= reading["salinity"] <= 34.0)
         mock_ph_service.read_ph.assert_called_once()
+        mock_sal_service.read_salinity.assert_called_once()
+        mock_do_service.read_do.assert_called_once()

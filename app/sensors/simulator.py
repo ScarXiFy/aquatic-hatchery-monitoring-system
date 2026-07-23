@@ -42,20 +42,45 @@ def generate_sensor_reading():
         current_temp += random.uniform(-0.05, 0.05)
         current_temp = round(current_temp, 2)
     
-    # Dissolved Oxygen: move 0.1 mg/L toward target per step (3s)
-    do_diff = target_do - current_do
-    if abs(do_diff) > 0.01:
-        step = 0.1 if do_diff > 0 else -0.1
-        if abs(do_diff) < 0.1:
-            current_do = target_do
-        else:
-            current_do += step
-    # Add a tiny bit of random noise (e.g. +-0.03)
-    current_do += random.uniform(-0.03, 0.03)
-    current_do = round(current_do, 2)
+    # Dissolved Oxygen: use ADS1115 AIN2 if available on RPi; fall back to simulation otherwise
+    sensor_do = None
+    if isRpiPresent:
+        try:
+            from app.services.do_sensor import DOSensorService
+            do_sensor = DOSensorService()
+            sensor_do = do_sensor.read_do()
+        except Exception:
+            pass
+
+    if sensor_do is not None:
+        current_do = sensor_do
+    else:
+        print(f"[DUMMY] Dissolved Oxygen sensor failed to initialize - using simulated DO readings")
+        # Move 0.1 mg/L toward target per step (3s)
+        do_diff = target_do - current_do
+        if abs(do_diff) > 0.01:
+            step = 0.1 if do_diff > 0 else -0.1
+            if abs(do_diff) < 0.1:
+                current_do = target_do
+            else:
+                current_do += step
+        # Add a tiny bit of random noise (e.g. +-0.03)
+        current_do += random.uniform(-0.03, 0.03)
+        current_do = round(current_do, 2)
     
-    # Salinity and pH remain fluctuating around typical values
-    salinity = round(random.uniform(29.0, 34.0), 2)
+    # Salinity: use ADS1115 AIN1 if available on RPi; fall back to simulation otherwise
+    salinity = None
+    if isRpiPresent:
+        try:
+            from app.services.salinity_sensor import SalinitySensorService
+            salinity_sensor = SalinitySensorService()
+            salinity = salinity_sensor.read_salinity()
+        except Exception:
+            pass
+
+    if salinity is None:
+        print(f"[DUMMY] Salinity sensor failed to initialize - using simulated salinity readings")
+        salinity = round(random.uniform(29.0, 34.0), 2)
     
     ph = None
     if isRpiPresent:
@@ -68,7 +93,7 @@ def generate_sensor_reading():
             
     if ph is None:
         print(f"[DUMMY] pH sensor failed to initialize - using simulated pH readings")
-        ph = round(random.uniform(3, 5), 2)
+        ph = round(random.uniform(7.6, 8.3), 2)
     
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
