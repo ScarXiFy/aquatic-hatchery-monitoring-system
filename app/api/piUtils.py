@@ -1,16 +1,18 @@
 import random
 # TEMPORARY PIN PLACEMENTS
 sourceValvePin = 18
-drainValvePin = 16
+drainValvePin = 17
 
 # Temperature control pins
-coolingSystemPin = 20
+coolingSystemPin = 5
 coolingValvePin = 21
 heatingSystemPin = 22
 heatingValvePin = 23
 
 # Dissolved oxygen control pins
-doSolenoidValvePin = 24         # NEED TO CONFIG FOR 3 PINS
+doSolenoidValve1 = 12         # NEED TO CONFIG FOR 3 PINS
+doSolenoidValve2 = 16
+doSolenoidValve3 = 20
 doBleedValveStepperPin = 25     # stepper motor (PWM duty cycle maps to open %)
 
 isRpiPresent: bool = True
@@ -30,7 +32,7 @@ heatingValveOpen = False
 
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
-
+_dosvcounter = 3
 
 # DUMMY implementations (PC)
 
@@ -67,9 +69,13 @@ def setDummyHeatingValve(isOpen: bool):
 
 # Dissolved oxygen
 def setDummyDoSolenoidValve(isOpen: bool):
-    global doSolenoidValveOpen
-    doSolenoidValveOpen = isOpen
-    print(f"[DUMMY] DO solenoid valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    global _dosvcounter
+    if isOpen:
+        _dosvcounter += 1
+    else:
+        _dosvcounter -= 1
+    _dosvcounter = max(0, min(3, _dosvcounter))
+    print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
 
 def setDummyDoBleedValve(percent: float):
     global doBleedValvePercent
@@ -98,7 +104,9 @@ if isRpiPresent:
     GPIO.setup(coolingValvePin, GPIO.OUT)
     GPIO.setup(heatingSystemPin, GPIO.OUT)
     GPIO.setup(heatingValvePin, GPIO.OUT)
-    GPIO.setup(doSolenoidValvePin, GPIO.OUT)
+    GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
 
     # Stepper motor driven via PWM on doBleedValveStepperPin
     GPIO.setup(doBleedValveStepperPin, GPIO.OUT)
@@ -144,8 +152,38 @@ if isRpiPresent:
     def setDoSolenoidValve(isOpen: bool):
         global doSolenoidValveOpen
         doSolenoidValveOpen = isOpen
-        print(f"[RPI] DO solenoid valve -> {'OPEN' if isOpen else 'CLOSED'}")
-        GPIO.output(doSolenoidValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+        global _dosvcounter
+        if isOpen is True:
+            _dosvcounter+=1
+        else:
+            _dosvcounter-=1
+        print(f"[RPI] DO solenoid valve -> {isOpen}")
+        if _dosvcounter > 3:
+            print(f"[RPI] MAX valves OPEN -> {_dosvcounter}")
+            _dosvcounter = 3
+        elif _dosvcounter < 0:
+            print(f"[RPI] ALL valves CLOSED -> {_dosvcounter}")
+            _dosvcounter = 0
+
+        print(f"[RPI] DO solenoid valves open: {_dosvcounter}/3")
+
+        if _dosvcounter == 3:
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
+        elif _dosvcounter == 2:
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.LOW)
+        elif _dosvcounter == 1:
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.LOW)
+            GPIO.output(doSolenoidValve3, GPIO.LOW)
+        elif _dosvcounter == 0:
+            GPIO.output(doSolenoidValve1, GPIO.LOW)
+            GPIO.output(doSolenoidValve2, GPIO.LOW)
+            GPIO.output(doSolenoidValve3, GPIO.LOW)
+                
 
     def setDoBleedValve(percent: float):
         global doBleedValvePercent
@@ -251,8 +289,8 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
 
     else:
         print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")
-        doSolenoidValve(doSolenoidValveOpen)
-        doBleedValve(doBleedValvePercent)
+        #doSolenoidValve(doSolenoidValveOpen)
+        #doBleedValve(doBleedValvePercent)
 
 
 # ---------------------------------------------------------------------------

@@ -26,18 +26,67 @@
         </svg>
         Optimal</span>
       <time id="current-date-time" datetime="">--</time>
-      <button class="icon-button" type="button" aria-label="View notifications">
-        <svg aria-hidden="true" viewBox="0 0 24 24">
-          <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
-          <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-        </svg>
-      </button>
+      <div class="notification-wrapper">
+        <button class="icon-button" id="notification-bell-btn" type="button" aria-label="View notifications">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          <span id="notification-badge" class="notification-badge" hidden>0</span>
+        </button>
+
+        <div id="notification-dropdown" class="notification-dropdown" hidden>
+          <div class="notification-dropdown-header">
+            <strong>Notifications</strong>
+            <button id="clear-notifications-btn" type="button" class="text-button">Clear all</button>
+          </div>
+          <div id="notification-list" class="notification-list">
+            <p class="notification-empty">No notifications yet.</p>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 
   <main class="page-shell">
     {% block content %}{% endblock %}
   </main>
+
+  <!-- Warning Alert Modal Overlay -->
+  <div id="alert-modal-overlay" class="alert-modal-overlay" hidden aria-modal="true" role="dialog">
+    <div class="alert-modal-card">
+      <div class="alert-modal-header">
+        <div class="alert-title-wrap">
+          <span class="alert-icon-warning">⚠️</span>
+          <h2>System Alert</h2>
+        </div>
+        <div class="alert-modal-actions">
+          <button id="alert-modal-minimize-btn" type="button" class="alert-action-btn" title="Minimize">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+          </button>
+          <button id="alert-modal-close-btn" type="button" class="alert-action-btn alert-close-btn" title="Close & send to notification bell">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="alert-modal-body" class="alert-modal-body">
+        <!-- Text list inserted via JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Docked Floating Card -->
+  <div id="alert-docked-card" class="alert-docked-card" hidden>
+    <div class="alert-docked-content" id="alert-docked-expand-trigger" title="Click to expand alert modal">
+      <span class="alert-docked-icon">⚠️</span>
+      <div id="alert-docked-text" class="alert-docked-text">
+        <!-- Compact info inserted via JS -->
+      </div>
+    </div>
+    <button id="alert-docked-close-btn" type="button" class="alert-docked-close" title="Dismiss to notification bell">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+    </button>
+  </div>
 
   <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
   <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>

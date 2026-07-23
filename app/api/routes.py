@@ -8,7 +8,11 @@ from app.models import (
     get_thresholds,
     update_thresholds,
     get_control_settings,
-    update_control_settings
+    update_control_settings,
+    get_notifications,
+    create_notification,
+    mark_notifications_read,
+    clear_all_notifications,
 )
 
 api_bp = Blueprint("api", __name__)
@@ -153,3 +157,42 @@ def set_sliders():
         CONTROL_STATE["sliders"][key] = val
         
     return jsonify({"sliders": db_sliders})
+
+
+@api_bp.get("/notifications")
+def fetch_notifications():
+    notifications, unread_count = get_notifications()
+    return jsonify({
+        "notifications": notifications,
+        "unread_count": unread_count
+    })
+
+
+@api_bp.post("/notifications")
+def save_notification():
+    payload = request.get_json(silent=True) or {}
+    required = ["parameter", "status", "current_value", "threshold_value", "message"]
+    if not all(k in payload for k in required):
+        return jsonify({"error": "missing required notification fields"}), 400
+        
+    n = create_notification(payload)
+    return jsonify({"notification": n}), 201
+
+
+@api_bp.put("/notifications/read")
+def mark_read():
+    notifications, unread_count = mark_notifications_read()
+    return jsonify({
+        "notifications": notifications,
+        "unread_count": unread_count
+    })
+
+
+@api_bp.delete("/notifications")
+def delete_notifications():
+    notifications, unread_count = clear_all_notifications()
+    return jsonify({
+        "notifications": notifications,
+        "unread_count": unread_count
+    })
+
