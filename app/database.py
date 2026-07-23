@@ -27,3 +27,7 @@ def init_db(app):
         with schema_path.open("r", encoding="utf-8") as schema_file:
             db.executescript(schema_file.read())
         db.commit()
+
+        from app.models import cleanup_old_notifications
+        cleanup_old_notifications()
+

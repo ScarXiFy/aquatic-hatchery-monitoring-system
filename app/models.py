@@ -269,3 +269,105 @@ def update_thresholds(updates):
 
     db.commit()
     return get_thresholds()
+
+
+def cleanup_old_notifications():
+    """
+    Deletes all notifications created before the current local day (00:00:00 local time).
+    """
+    local_now = datetime.now().astimezone()
+    start_of_local_today = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    start_utc_str = start_of_local_today.astimezone(timezone.utc).isoformat(timespec="seconds")
+    
+    db = get_db()
+    db.execute(
+        "DELETE FROM notifications WHERE datetime(created_at) < datetime(?)",
+        (start_utc_str,)
+    )
+    db.commit()
+
+
+def create_notification(data):
+    cleanup_old_notifications()
+    db = get_db()
+    created_at = data.get("created_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cursor = db.execute(
+        """
+        INSERT INTO notifications (
+            parameter,
+            status,
+            current_value,
+            threshold_value,
+            message,
+            created_at,
+            is_read,
+            is_dismissed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0)
+        """,
+        (
+            data["parameter"],
+            data["status"],
+            float(data["current_value"]),
+            data["threshold_value"],
+            data["message"],
+            created_at,
+        ),
+    )
+    db.commit()
+    return {
+        "id": cursor.lastrowid,
+        "parameter": data["parameter"],
+        "status": data["status"],
+        "current_value": float(data["current_value"]),
+        "threshold_value": data["threshold_value"],
+        "message": data["message"],
+        "created_at": created_at,
+        "is_read": 0,
+        "is_dismissed": 0,
+    }
+
+
+def get_notifications():
+    cleanup_old_notifications()
+    db = get_db()
+    rows = db.execute(
+        """
+        SELECT id, parameter, status, current_value, threshold_value, message, created_at, is_read, is_dismissed
+        FROM notifications
+        ORDER BY datetime(created_at) DESC, id DESC
+        """
+    ).fetchall()
+    
+    notifications = [
+        {
+            "id": row["id"],
+            "parameter": row["parameter"],
+            "status": row["status"],
+            "current_value": row["current_value"],
+            "threshold_value": row["threshold_value"],
+            "message": row["message"],
+            "created_at": row["created_at"],
+            "is_read": row["is_read"],
+            "is_dismissed": row["is_dismissed"],
+        }
+        for row in rows
+    ]
+    
+    unread_count = sum(1 for n in notifications if not n["is_read"])
+    return notifications, unread_count
+
+
+def mark_notifications_read():
+    cleanup_old_notifications()
+    db = get_db()
+    db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+    db.commit()
+    return get_notifications()
+
+
+def clear_all_notifications():
+    db = get_db()
+    db.execute("DELETE FROM notifications")
+    db.commit()
+    return [], 0

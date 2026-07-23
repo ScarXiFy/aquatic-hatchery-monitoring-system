@@ -253,10 +253,10 @@
 
   const previousMetricStates = {};
   const activeAlertsMap = new Map();
+  const dismissedAlertKeys = new Set();
   let notificationHistory = [];
   let unreadCount = 0;
-  let isAlertMinimized = false;
-  let currentAlertModalState = "closed";
+  let notificationSystemState = "dismissed"; // "overlay", "minimized", "dismissed"
 
   function formatTimestamp(isoOrDate) {
     const d = isoOrDate ? new Date(isoOrDate) : new Date();
@@ -270,36 +270,127 @@
     });
   }
 
+  function formatTimeOnly(isoOrDate) {
+    const d = isoOrDate ? new Date(isoOrDate) : new Date();
+    if (Number.isNaN(d.getTime())) return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  function getThresholdDescription(metric) {
+    if (metric === "temperature") {
+      const setpoint = controlState.temperature_setpoint !== undefined ? controlState.temperature_setpoint : 26;
+      return `Setpoint ${formatValue("temperature", setpoint)} (±2.0 °C)`;
+    }
+    if (metric === "dissolved_oxygen") {
+      const setpoint = controlState.dissolved_oxygen_setpoint !== undefined ? controlState.dissolved_oxygen_setpoint : 7.2;
+      return `Setpoint ${formatValue("dissolved_oxygen", setpoint)} (±1.0 mg/L)`;
+    }
+    const t = thresholdFor(metric);
+    if (!t) return "--";
+    return `Min ${formatValue(metric, t.min_value)} — Max ${formatValue(metric, t.max_value)}`;
+  }
+
+  async function loadNotificationsFromDB() {
+    try {
+      const res = await fetch("/api/notifications");
+      if (res.ok) {
+        const data = await res.json();
+        notificationHistory = data.notifications || [];
+        unreadCount = data.unread_count || 0;
+        updateNotificationBellUI();
+      }
+    } catch (e) {
+      console.error("Failed to load notifications from DB", e);
+    }
+  }
+
+  async function persistNotificationToDB(notificationData) {
+    try {
+      const res = await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(notificationData),
+      });
+      if (res.ok) {
+        await loadNotificationsFromDB();
+      }
+    } catch (e) {
+      console.error("Failed to persist notification to DB", e);
+    }
+  }
+
+  async function markNotificationsAsReadDB() {
+    try {
+      const res = await fetch("/api/notifications/read", { method: "PUT" });
+      if (res.ok) {
+        const data = await res.json();
+        notificationHistory = data.notifications || [];
+        unreadCount = 0;
+        updateNotificationBellUI();
+      }
+    } catch (e) {
+      console.error("Failed to mark notifications as read", e);
+    }
+  }
+
+  async function clearNotificationsDB() {
+    try {
+      const res = await fetch("/api/notifications", { method: "DELETE" });
+      if (res.ok) {
+        notificationHistory = [];
+        unreadCount = 0;
+        updateNotificationBellUI();
+      }
+    } catch (e) {
+      console.error("Failed to clear notifications", e);
+    }
+  }
+
   function renderAlertModalBody() {
+    const card = document.querySelector(".alert-modal-card");
     const body = document.getElementById("alert-modal-body");
     if (!body) return;
+
     const items = Array.from(activeAlertsMap.values());
     if (!items.length) {
-      body.innerHTML = "<p class='alert-modal-item'>No active alerts.</p>";
+      body.innerHTML = "<div class='alert-modal-item'>No active alerts.</div>";
       return;
     }
+
+    const hasCritical = items.some((i) => i.status === "CRITICAL" || i.status === "Critical");
+    if (card) {
+      card.setAttribute("data-level", hasCritical ? "CRITICAL" : "WARNING");
+    }
+
     body.innerHTML = items
       .map(
         (item) => `
         <div class="alert-modal-item" data-status="${item.status}">
-          ${item.text}
+          <div class="alert-item-status-wrap">
+            <span class="alert-item-badge ${item.status === "CRITICAL" ? "badge-critical" : "badge-warning"}">
+              [ ${item.status} ]
+            </span>
+          </div>
+          <h3 class="alert-item-parameter">${item.parameter}</h3>
+          <div class="alert-item-value">${item.currentValueFormatted}</div>
+          <div class="alert-item-message">${item.message}</div>
+          <div class="alert-item-time">${item.timeOnly}</div>
         </div>
       `
       )
       .join("");
   }
 
-  function showAlertModal() {
+  function showOverlay() {
     renderAlertModalBody();
     const overlay = document.getElementById("alert-modal-overlay");
     const docked = document.getElementById("alert-docked-card");
     if (overlay) overlay.hidden = false;
     if (docked) docked.hidden = true;
-    isAlertMinimized = false;
-    currentAlertModalState = "modal";
+    notificationSystemState = "overlay";
   }
 
-  function minimizeAlertModal() {
+  function minimizeOverlay() {
     const overlay = document.getElementById("alert-modal-overlay");
     const docked = document.getElementById("alert-docked-card");
     const dockedText = document.getElementById("alert-docked-text");
@@ -309,24 +400,23 @@
     const items = Array.from(activeAlertsMap.values());
     if (dockedText) {
       if (items.length === 1) {
-        dockedText.textContent = items[0].text;
+        dockedText.innerHTML = `<div><strong>${items[0].icon} ${items[0].status}:</strong> ${items[0].parameter} (${items[0].currentValueFormatted})</div><div><small>${items[0].timeOnly}</small></div>`;
       } else if (items.length > 1) {
-        dockedText.textContent = `${items.length} Active Alerts: ${items.map((i) => i.parameter).join(", ")}`;
+        dockedText.innerHTML = `<div><strong>⚠️ ${items.length} Active Alerts:</strong> ${items.map((i) => i.parameter).join(", ")}</div>`;
       } else {
         dockedText.textContent = "System Alert";
       }
     }
-    isAlertMinimized = true;
-    currentAlertModalState = "docked";
+    notificationSystemState = "minimized";
   }
 
-  function updateDockedCard() {
-    if (currentAlertModalState === "docked") {
-      minimizeAlertModal();
+  function updateFloatingWidget() {
+    if (notificationSystemState === "minimized") {
+      minimizeOverlay();
     }
   }
 
-  function dismissAlertModal() {
+  function dismissOverlay() {
     const overlay = document.getElementById("alert-modal-overlay");
     const docked = document.getElementById("alert-docked-card");
     if (overlay) overlay.hidden = true;
@@ -334,20 +424,18 @@
 
     const items = Array.from(activeAlertsMap.values());
     items.forEach((item) => {
-      notificationHistory.unshift({
-        id: Date.now() + Math.random(),
-        text: item.text,
-        status: item.status,
-        parameter: item.parameter,
-        time: item.time,
-      });
-      unreadCount++;
+      dismissedAlertKeys.add(item.key);
     });
 
-    activeAlertsMap.clear();
-    isAlertMinimized = false;
-    currentAlertModalState = "closed";
-    updateNotificationBellUI();
+    notificationSystemState = "dismissed";
+    loadNotificationsFromDB();
+  }
+
+  function hideAllAlertUI() {
+    const overlay = document.getElementById("alert-modal-overlay");
+    const docked = document.getElementById("alert-docked-card");
+    if (overlay) overlay.hidden = true;
+    if (docked) docked.hidden = true;
   }
 
   function updateNotificationBellUI() {
@@ -369,8 +457,15 @@
         list.innerHTML = notificationHistory
           .map(
             (n) => `
-          <div class="notification-item">
-            <span class="notification-item-text">${n.text}</span>
+          <div class="notification-item" data-status="${n.status}">
+            <div style="margin-bottom: 4px; display: flex; justify-content: space-between;">
+              <strong style="color: ${n.status === 'CRITICAL' || n.status === 'Critical' ? '#dc2626' : '#d97706'};">${n.status === "CRITICAL" || n.status === "Critical" ? "🚨" : "⚠️"} [${n.status}] ${n.parameter}</strong>
+              <small style="color: #64748b;">${formatTimestamp(n.created_at)}</small>
+            </div>
+            <div style="font-size: 13px; color: #334155;">
+              <div>Value: <strong>${n.current_value}</strong></div>
+              <p style="margin: 4px 0 0; font-weight: 700; color: #475569;">${n.message}</p>
+            </div>
           </div>
         `
           )
@@ -382,54 +477,80 @@
   function checkAlertTriggers(reading) {
     if (!reading) return;
     const timeFormatted = formatTimestamp(reading.timestamp);
-    let hasNewAlertState = false;
+    const timeOnlyFormatted = formatTimeOnly(reading.timestamp);
+    let newlyTriggered = false;
 
     Object.keys(metricDisplayNames).forEach((metric) => {
       const val = Number(reading[metric]);
       const state = conditionFor(metric, val);
       const prevState = previousMetricStates[metric];
+      const paramName = metricDisplayNames[metric];
 
       if (state === "warning" || state === "critical") {
-        const statusText = state === "critical" ? "Critical" : "Warning";
-        const paramName = metricDisplayNames[metric];
-        const formattedText = `Status: ${statusText} | Parameter: ${paramName} | Time: ${timeFormatted}`;
-
-        if (!prevState || prevState === "optimal" || prevState === "neutral" || prevState !== state) {
-          hasNewAlertState = true;
-        }
+        const statusText = state === "critical" ? "CRITICAL" : "WARNING";
+        const iconStr = state === "critical" ? "🚨" : "⚠️";
+        const messageStr =
+          state === "critical"
+            ? "Immediate action required."
+            : "Outside normal range.";
+        const currValStr = formatValue(metric, val);
+        const threshStr = getThresholdDescription(metric);
+        const alertKey = `${metric}_${statusText}`;
 
         activeAlertsMap.set(metric, {
           metric,
           status: statusText,
           parameter: paramName,
+          currentValue: val,
+          currentValueFormatted: currValStr,
+          thresholdValue: threshStr,
+          message: messageStr,
+          icon: iconStr,
           time: timeFormatted,
-          text: formattedText,
+          timeOnly: timeOnlyFormatted,
+          key: alertKey,
         });
+
+        // Only persist new notification to SQLite DB when state actually changes
+        if (prevState !== state) {
+          persistNotificationToDB({
+            parameter: paramName,
+            status: statusText,
+            current_value: val,
+            threshold_value: threshStr,
+            message: messageStr,
+            created_at: reading.timestamp,
+          });
+          newlyTriggered = true;
+        }
       } else if (state === "optimal") {
         activeAlertsMap.delete(metric);
+        dismissedAlertKeys.delete(`${metric}_WARNING`);
+        dismissedAlertKeys.delete(`${metric}_CRITICAL`);
+        dismissedAlertKeys.delete(`${metric}_Warning`);
+        dismissedAlertKeys.delete(`${metric}_Critical`);
       }
       previousMetricStates[metric] = state;
     });
 
     if (activeAlertsMap.size > 0) {
-      if (hasNewAlertState) {
-        if (!isAlertMinimized) {
-          showAlertModal();
+      if (newlyTriggered) {
+        if (notificationSystemState !== "minimized") {
+          showOverlay();
         } else {
-          updateDockedCard();
+          updateFloatingWidget();
         }
-      } else if (currentAlertModalState === "modal") {
-        renderAlertModalBody();
-      } else if (currentAlertModalState === "docked") {
-        updateDockedCard();
+      } else {
+        if (notificationSystemState === "overlay") {
+          renderOverlayBody();
+        } else if (notificationSystemState === "minimized") {
+          updateFloatingWidget();
+        }
       }
     } else {
-      if (currentAlertModalState === "modal" || currentAlertModalState === "docked") {
-        const overlay = document.getElementById("alert-modal-overlay");
-        const docked = document.getElementById("alert-docked-card");
-        if (overlay) overlay.hidden = true;
-        if (docked) docked.hidden = true;
-        currentAlertModalState = "closed";
+      if (notificationSystemState !== "dismissed") {
+        hideAllAlertUI();
+        notificationSystemState = "dismissed";
       }
     }
   }
@@ -444,8 +565,7 @@
         e.stopPropagation();
         dropdown.hidden = !dropdown.hidden;
         if (!dropdown.hidden) {
-          unreadCount = 0;
-          updateNotificationBellUI();
+          markNotificationsAsReadDB();
         }
       });
 
@@ -457,10 +577,9 @@
     }
 
     if (clearBtn) {
-      clearBtn.addEventListener("click", () => {
-        notificationHistory = [];
-        unreadCount = 0;
-        updateNotificationBellUI();
+      clearBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        clearNotificationsDB();
       });
     }
 
@@ -469,10 +588,35 @@
     const expandTrigger = document.getElementById("alert-docked-expand-trigger");
     const dockedCloseBtn = document.getElementById("alert-docked-close-btn");
 
-    if (minBtn) minBtn.addEventListener("click", minimizeAlertModal);
-    if (closeBtn) closeBtn.addEventListener("click", dismissAlertModal);
-    if (expandTrigger) expandTrigger.addEventListener("click", showAlertModal);
-    if (dockedCloseBtn) dockedCloseBtn.addEventListener("click", dismissAlertModal);
+    if (minBtn) {
+      minBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        minimizeOverlay();
+      });
+    }
+
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dismissOverlay();
+      });
+    }
+
+    if (expandTrigger) {
+      expandTrigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        showOverlay();
+      });
+    }
+
+    if (dockedCloseBtn) {
+      dockedCloseBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dismissOverlay();
+      });
+    }
+
+    loadNotificationsFromDB();
   }
 
   function updateGauges(reading) {
