@@ -244,10 +244,242 @@
     }
   }
 
+  const metricDisplayNames = {
+    temperature: "Temperature",
+    dissolved_oxygen: "Dissolved Oxygen",
+    ph: "pH Level",
+    salinity: "Salinity",
+  };
+
+  const previousMetricStates = {};
+  const activeAlertsMap = new Map();
+  let notificationHistory = [];
+  let unreadCount = 0;
+  let isAlertMinimized = false;
+  let currentAlertModalState = "closed";
+
+  function formatTimestamp(isoOrDate) {
+    const d = isoOrDate ? new Date(isoOrDate) : new Date();
+    if (Number.isNaN(d.getTime())) return new Date().toLocaleString();
+    return d.toLocaleString([], {
+      month: "short",
+      day: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function renderAlertModalBody() {
+    const body = document.getElementById("alert-modal-body");
+    if (!body) return;
+    const items = Array.from(activeAlertsMap.values());
+    if (!items.length) {
+      body.innerHTML = "<p class='alert-modal-item'>No active alerts.</p>";
+      return;
+    }
+    body.innerHTML = items
+      .map(
+        (item) => `
+        <div class="alert-modal-item" data-status="${item.status}">
+          ${item.text}
+        </div>
+      `
+      )
+      .join("");
+  }
+
+  function showAlertModal() {
+    renderAlertModalBody();
+    const overlay = document.getElementById("alert-modal-overlay");
+    const docked = document.getElementById("alert-docked-card");
+    if (overlay) overlay.hidden = false;
+    if (docked) docked.hidden = true;
+    isAlertMinimized = false;
+    currentAlertModalState = "modal";
+  }
+
+  function minimizeAlertModal() {
+    const overlay = document.getElementById("alert-modal-overlay");
+    const docked = document.getElementById("alert-docked-card");
+    const dockedText = document.getElementById("alert-docked-text");
+    if (overlay) overlay.hidden = true;
+    if (docked) docked.hidden = false;
+
+    const items = Array.from(activeAlertsMap.values());
+    if (dockedText) {
+      if (items.length === 1) {
+        dockedText.textContent = items[0].text;
+      } else if (items.length > 1) {
+        dockedText.textContent = `${items.length} Active Alerts: ${items.map((i) => i.parameter).join(", ")}`;
+      } else {
+        dockedText.textContent = "System Alert";
+      }
+    }
+    isAlertMinimized = true;
+    currentAlertModalState = "docked";
+  }
+
+  function updateDockedCard() {
+    if (currentAlertModalState === "docked") {
+      minimizeAlertModal();
+    }
+  }
+
+  function dismissAlertModal() {
+    const overlay = document.getElementById("alert-modal-overlay");
+    const docked = document.getElementById("alert-docked-card");
+    if (overlay) overlay.hidden = true;
+    if (docked) docked.hidden = true;
+
+    const items = Array.from(activeAlertsMap.values());
+    items.forEach((item) => {
+      notificationHistory.unshift({
+        id: Date.now() + Math.random(),
+        text: item.text,
+        status: item.status,
+        parameter: item.parameter,
+        time: item.time,
+      });
+      unreadCount++;
+    });
+
+    activeAlertsMap.clear();
+    isAlertMinimized = false;
+    currentAlertModalState = "closed";
+    updateNotificationBellUI();
+  }
+
+  function updateNotificationBellUI() {
+    const badge = document.getElementById("notification-badge");
+    const list = document.getElementById("notification-list");
+    if (badge) {
+      if (unreadCount > 0) {
+        badge.textContent = unreadCount > 99 ? "99+" : unreadCount;
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+      }
+    }
+
+    if (list) {
+      if (!notificationHistory.length) {
+        list.innerHTML = '<p class="notification-empty">No notifications yet.</p>';
+      } else {
+        list.innerHTML = notificationHistory
+          .map(
+            (n) => `
+          <div class="notification-item">
+            <span class="notification-item-text">${n.text}</span>
+          </div>
+        `
+          )
+          .join("");
+      }
+    }
+  }
+
+  function checkAlertTriggers(reading) {
+    if (!reading) return;
+    const timeFormatted = formatTimestamp(reading.timestamp);
+    let hasNewAlertState = false;
+
+    Object.keys(metricDisplayNames).forEach((metric) => {
+      const val = Number(reading[metric]);
+      const state = conditionFor(metric, val);
+      const prevState = previousMetricStates[metric];
+
+      if (state === "warning" || state === "critical") {
+        const statusText = state === "critical" ? "Critical" : "Warning";
+        const paramName = metricDisplayNames[metric];
+        const formattedText = `Status: ${statusText} | Parameter: ${paramName} | Time: ${timeFormatted}`;
+
+        if (!prevState || prevState === "optimal" || prevState === "neutral" || prevState !== state) {
+          hasNewAlertState = true;
+        }
+
+        activeAlertsMap.set(metric, {
+          metric,
+          status: statusText,
+          parameter: paramName,
+          time: timeFormatted,
+          text: formattedText,
+        });
+      } else if (state === "optimal") {
+        activeAlertsMap.delete(metric);
+      }
+      previousMetricStates[metric] = state;
+    });
+
+    if (activeAlertsMap.size > 0) {
+      if (hasNewAlertState) {
+        if (!isAlertMinimized) {
+          showAlertModal();
+        } else {
+          updateDockedCard();
+        }
+      } else if (currentAlertModalState === "modal") {
+        renderAlertModalBody();
+      } else if (currentAlertModalState === "docked") {
+        updateDockedCard();
+      }
+    } else {
+      if (currentAlertModalState === "modal" || currentAlertModalState === "docked") {
+        const overlay = document.getElementById("alert-modal-overlay");
+        const docked = document.getElementById("alert-docked-card");
+        if (overlay) overlay.hidden = true;
+        if (docked) docked.hidden = true;
+        currentAlertModalState = "closed";
+      }
+    }
+  }
+
+  function bindNotificationUI() {
+    const bellBtn = document.getElementById("notification-bell-btn");
+    const dropdown = document.getElementById("notification-dropdown");
+    const clearBtn = document.getElementById("clear-notifications-btn");
+
+    if (bellBtn && dropdown) {
+      bellBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dropdown.hidden = !dropdown.hidden;
+        if (!dropdown.hidden) {
+          unreadCount = 0;
+          updateNotificationBellUI();
+        }
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!dropdown.contains(e.target) && !bellBtn.contains(e.target)) {
+          dropdown.hidden = true;
+        }
+      });
+    }
+
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        notificationHistory = [];
+        unreadCount = 0;
+        updateNotificationBellUI();
+      });
+    }
+
+    const minBtn = document.getElementById("alert-modal-minimize-btn");
+    const closeBtn = document.getElementById("alert-modal-close-btn");
+    const expandTrigger = document.getElementById("alert-docked-expand-trigger");
+    const dockedCloseBtn = document.getElementById("alert-docked-close-btn");
+
+    if (minBtn) minBtn.addEventListener("click", minimizeAlertModal);
+    if (closeBtn) closeBtn.addEventListener("click", dismissAlertModal);
+    if (expandTrigger) expandTrigger.addEventListener("click", showAlertModal);
+    if (dockedCloseBtn) dockedCloseBtn.addEventListener("click", dismissAlertModal);
+  }
+
   function updateGauges(reading) {
     latestReading = reading;
     Object.keys(metrics).forEach((metric) => updateGauge(metric, reading));
     updateNavStatus(reading);
+    checkAlertTriggers(reading);
   }
 
   function metricStats(metric, readings) {
@@ -663,6 +895,7 @@
     updateDateTime();
     setInterval(updateDateTime, 30000);
     bindControls();
+    bindNotificationUI();
     loadControls()
       .then(loadThresholds)
       .then(loadLatestReading);

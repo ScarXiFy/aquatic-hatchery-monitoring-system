@@ -216,21 +216,22 @@
   }
 
   function buildWeekPoints(readings) {
-    const buckets = new Map();
+    const sorted = sortedReadings(readings);
 
-    sortedReadings(readings).forEach((reading) => {
+    // Group readings by local YYYY-MM-DD
+    const dayBuckets = new Map();
+    sorted.forEach((reading) => {
       const date = new Date(reading.timestamp);
       if (Number.isNaN(date.getTime())) return;
 
-      const hour4 = Math.floor(date.getHours() / 4) * 4;
-      const key = `${date.toISOString().slice(0, 10)}T${String(hour4).padStart(2, "0")}`;
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
-      if (!buckets.has(key)) {
+      if (!dayBuckets.has(key)) {
         const values = {};
         Object.keys(metrics).forEach((m) => { values[m] = []; });
-        buckets.set(key, { timestamp: reading.timestamp, values });
+        dayBuckets.set(key, { timestamp: reading.timestamp, dateObj: date, values });
       }
-      const bucket = buckets.get(key);
+      const bucket = dayBuckets.get(key);
       bucket.timestamp = reading.timestamp;
       Object.keys(metrics).forEach((m) => {
         const v = Number(reading[m]);
@@ -238,19 +239,54 @@
       });
     });
 
-    return Array.from(buckets.values())
-      .slice(-42)
-      .map((bucket) => {
-        const point = {
-          timestamp: bucket.timestamp,
-          label: `${dayLabel(bucket.timestamp)} ${timeLabel(bucket.timestamp)}`,
-        };
-        Object.keys(metrics).forEach((m) => {
+    // Generate last 7 days range (past 6 days + today)
+    const dates = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      dates.push({ key, dateObj: d });
+    }
+
+    // Pre-seed lastKnownValues from the earliest day with readings if first days are empty
+    const lastKnownValues = {};
+    Object.keys(metrics).forEach((m) => {
+      lastKnownValues[m] = null;
+      for (const { key } of dates) {
+        const bucket = dayBuckets.get(key);
+        if (bucket && bucket.values[m] && bucket.values[m].length > 0) {
           const avg = average(bucket.values[m]);
-          point[m] = avg === null ? null : Number(avg.toFixed(metrics[m].decimals + 1));
-        });
-        return point;
+          lastKnownValues[m] = avg === null ? null : Number(avg.toFixed(metrics[m].decimals + 1));
+          break;
+        }
+      }
+    });
+
+    const points = [];
+    dates.forEach(({ key, dateObj }) => {
+      const bucket = dayBuckets.get(key);
+      const label = dayLabel(dateObj);
+      const point = {
+        timestamp: bucket ? bucket.timestamp : dateObj.toISOString(),
+        label: label,
+      };
+
+      Object.keys(metrics).forEach((m) => {
+        if (bucket && bucket.values[m] && bucket.values[m].length > 0) {
+          const avg = average(bucket.values[m]);
+          const roundedAvg = avg === null ? null : Number(avg.toFixed(metrics[m].decimals + 1));
+          point[m] = roundedAvg;
+          lastKnownValues[m] = roundedAvg;
+        } else {
+          point[m] = lastKnownValues[m];
+        }
       });
+
+      points.push(point);
+    });
+
+    return points;
   }
 
   function summarizeHistory(readings, range) {
@@ -486,11 +522,10 @@
                 if (!timestamps || !timestamps[idx]) return config.label;
                 const d = new Date(timestamps[idx]);
                 const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-                const dateStr =
-                  currentRange === "week"
-                    ? d.toLocaleDateString([], { month: "short", day: "numeric" }) + " "
-                    : "";
-                return `${config.label}  ·  ${dateStr}${timeStr}`;
+                const dateStr = d.toLocaleDateString([], { month: "short", day: "numeric" });
+                return currentRange === "week"
+                  ? `${config.label}  ·  ${dateStr}`
+                  : `${config.label}  ·  ${timeStr}`;
               },
               label: (context) => {
                 if (context.datasetIndex !== 0) return null;
