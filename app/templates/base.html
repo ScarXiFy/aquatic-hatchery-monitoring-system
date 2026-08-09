@@ -26,6 +26,14 @@
         </svg>
         Optimal</span>
       <time id="current-date-time" datetime="">--</time>
+      <button class="icon-button sound-toggle-btn" id="sound-toggle-btn" type="button" aria-label="Toggle sound alerts" title="Toggle sound alerts">
+        <span class="sound-icon-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        </span>
+      </button>
       <div class="notification-wrapper">
         <button class="icon-button" id="notification-bell-btn" type="button" aria-label="View notifications">
           <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -61,6 +69,9 @@
           <h2>System Alert</h2>
         </div>
         <div class="alert-modal-actions">
+          <button id="alert-modal-sound-btn" type="button" class="alert-action-btn sound-toggle-btn" title="Toggle sound alerts">
+            <span class="sound-icon-wrap"></span>
+          </button>
           <button id="alert-modal-minimize-btn" type="button" class="alert-action-btn" title="Minimize">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
           </button>
@@ -89,6 +100,7 @@
   </div>
 
   <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/sound.js') }}"></script>
   <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

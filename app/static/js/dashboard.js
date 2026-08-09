@@ -533,6 +533,10 @@
       previousMetricStates[metric] = state;
     });
 
+    if (window.HatcherySound) {
+      window.HatcherySound.updateAlarmState(activeAlertsMap);
+    }
+
     if (activeAlertsMap.size > 0) {
       if (newlyTriggered) {
         if (notificationSystemState !== "minimized") {
@@ -542,7 +546,7 @@
         }
       } else {
         if (notificationSystemState === "overlay") {
-          renderOverlayBody();
+          renderAlertModalBody();
         } else if (notificationSystemState === "minimized") {
           updateFloatingWidget();
         }

@@ -1458,3 +1458,58 @@ input.threshold-input {
   color: var(--red);
 }
 
+/* Sound Alert Control Buttons */
+.sound-toggle-btn {
+  position: relative;
+  transition: all 200ms ease;
+}
+
+.sound-toggle-btn.sound-muted {
+  color: #94a3b8;
+  opacity: 0.75;
+}
+
+.sound-toggle-btn.sound-muted:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.sound-toggle-btn.sound-active {
+  color: #ef4444;
+  animation: soundPulseBtn 1.2s infinite;
+}
+
+@keyframes soundPulseBtn {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.sound-toggle-btn.sound-pending-unlock {
+  color: #d97706;
+  animation: soundUnlockGlow 1.5s infinite;
+}
+
+@keyframes soundUnlockGlow {
+  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.4); }
+  70% { box-shadow: 0 0 0 8px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+
+.sound-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sound-wave-anim path:nth-child(2),
+.sound-wave-anim path:nth-child(3) {
+  animation: soundWavePulse 1s infinite alternate;
+}
+
+@keyframes soundWavePulse {
+  from { opacity: 0.3; }
+  to { opacity: 1; }
+}
+
+
