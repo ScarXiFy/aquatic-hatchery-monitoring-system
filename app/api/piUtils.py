@@ -48,6 +48,7 @@ heatingValveOpen = False
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
 _dosvcounter = 3
+motorInit: bool = False
 
 # DUMMY implementations (PC)
 
@@ -98,6 +99,65 @@ def setDummyDoBleedValve(percent: float):
     print(f"[DUMMY] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
 
 
+def initializeBleedValveMotor(app=None):
+    """
+    Initialize bleed valve stepper motor on startup. Reads stored motor position from DB,
+    resets motor CCW to position 0 (fully closed) if needed, sets motorInit = True, and
+    saves position 0 in DB.
+    """
+    global motorInit, doBleedValvePercent
+
+    def _do_init():
+        global motorInit, doBleedValvePercent
+        from app.models import load_motor_state, save_motor_state
+
+        saved_pos = load_motor_state("bleed_valve")
+        if saved_pos is None or not isinstance(saved_pos, int):
+            saved_pos = 0
+
+        saved_pos = max(0, min(3, saved_pos))
+
+        if saved_pos > 0:
+            total_steps = saved_pos * STEPS_PER_POSITION
+            if isRpiPresent and GPIO is not None:
+                print(f"[RPI] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CCW)...")
+                try:
+                    GPIO.output(bleedValveDirPin, CCW)
+                    for _ in range(total_steps):
+                        GPIO.output(bleedValveStepPin, GPIO.HIGH)
+                        time.sleep(STEP_DELAY)
+                        GPIO.output(bleedValveStepPin, GPIO.LOW)
+                        time.sleep(STEP_DELAY)
+                except Exception as e:
+                    logging.warning(f"[RPI] GPIO exception during motor init reset: {e}")
+                    print(f"[RPI] GPIO exception during motor init reset: {e}")
+            else:
+                print(f"[DUMMY] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CCW)...")
+
+        doBleedValvePercent = 0.0
+        try:
+            save_motor_state("bleed_valve", 0)
+        except Exception as e:
+            logging.warning(f"Failed to save motor state during initialization: {e}")
+
+        motorInit = True
+        prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
+        print(f"{prefix} Bleed valve motor initialized to position 0 (fully closed)")
+
+    if app is not None:
+        with app.app_context():
+            _do_init()
+    else:
+        try:
+            from flask import current_app
+            if current_app:
+                _do_init()
+            else:
+                _do_init()
+        except Exception:
+            _do_init()
+
+
 def setDoBleedValveMotor(target_percent: float):
     """
     Control Wantai 42bygh610-1 stepper motor for the bleed valve across 4 discrete positions:
@@ -105,22 +165,32 @@ def setDoBleedValveMotor(target_percent: float):
     """
     global doBleedValvePercent
 
-    if not isRpiPresent:
-        setDummyDoBleedValve(target_percent)
+    if not motorInit:
+        logging.critical("[RPI] Bleed valve motor not initialized! Movement skipped.")
+        print("[RPI] CRITICAL: Bleed valve motor not initialized! Movement skipped.")
         return
 
     positions = BLEED_VALVE_POSITIONS
     target_percent_clamped = max(0.0, min(100.0, target_percent))
+    target_level = min(range(len(positions)), key=lambda i: abs(positions[i] - target_percent_clamped))
+
+    if not isRpiPresent:
+        setDummyDoBleedValve(target_percent)
+        try:
+            from app.models import save_motor_state
+            save_motor_state("bleed_valve", target_level)
+        except Exception:
+            pass
+        return
 
     current_level = min(range(len(positions)), key=lambda i: abs(positions[i] - doBleedValvePercent))
-    target_level = min(range(len(positions)), key=lambda i: abs(positions[i] - target_percent_clamped))
 
     if current_level == target_level:
         print(f"[RPI] Bleed valve already at target position ({positions[target_level]:.1f}%)")
         return
 
     level_diff = target_level - current_level
-    direction = CCW if level_diff > 0 else CW
+    direction = CW if level_diff > 0 else CCW
     num_positions = abs(level_diff)
     total_steps = num_positions * STEPS_PER_POSITION
 
@@ -135,10 +205,16 @@ def setDoBleedValveMotor(target_percent: float):
             time.sleep(STEP_DELAY)
 
         doBleedValvePercent = positions[target_level]
+        try:
+            from app.models import save_motor_state
+            save_motor_state("bleed_valve", target_level)
+        except Exception as e:
+            logging.warning(f"Failed to persist motor state: {e}")
         print(f"[RPI] Bleed valve reached {doBleedValvePercent:.1f}%")
     except Exception as e:
         logging.error(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
         print(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
+
 
 
 # default assignments (PC mode)
