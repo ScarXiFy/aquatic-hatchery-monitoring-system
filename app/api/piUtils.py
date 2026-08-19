@@ -120,9 +120,9 @@ def initializeBleedValveMotor(app=None):
         if saved_pos > 0:
             total_steps = saved_pos * STEPS_PER_POSITION
             if isRpiPresent and GPIO is not None:
-                print(f"[RPI] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CCW)...")
+                print(f"[RPI] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CW)...")
                 try:
-                    GPIO.output(bleedValveDirPin, CCW)
+                    GPIO.output(bleedValveDirPin, CW)
                     for _ in range(total_steps):
                         GPIO.output(bleedValveStepPin, GPIO.HIGH)
                         time.sleep(STEP_DELAY)
@@ -132,7 +132,7 @@ def initializeBleedValveMotor(app=None):
                     logging.warning(f"[RPI] GPIO exception during motor init reset: {e}")
                     print(f"[RPI] GPIO exception during motor init reset: {e}")
             else:
-                print(f"[DUMMY] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CCW)...")
+                print(f"[DUMMY] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CW)...")
 
         doBleedValvePercent = 0.0
         try:
@@ -190,7 +190,7 @@ def setDoBleedValveMotor(target_percent: float):
         return
 
     level_diff = target_level - current_level
-    direction = CW if level_diff > 0 else CCW
+    direction = CCW if level_diff > 0 else CW
     num_positions = abs(level_diff)
     total_steps = num_positions * STEPS_PER_POSITION
 
