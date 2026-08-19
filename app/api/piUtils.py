@@ -120,7 +120,7 @@ def setDoBleedValveMotor(target_percent: float):
         return
 
     level_diff = target_level - current_level
-    direction = CW if level_diff > 0 else CCW
+    direction = CCW if level_diff > 0 else CW
     num_positions = abs(level_diff)
     total_steps = num_positions * STEPS_PER_POSITION
 
