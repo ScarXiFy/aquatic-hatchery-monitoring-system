@@ -1,7 +1,10 @@
 import random
+import time
+import logging
+
 # TEMPORARY PIN PLACEMENTS
 sourceValvePin = 18
-drainValvePin = 17
+drainValvePin = 24
 
 # Temperature control pins
 coolingSystemPin = 5
@@ -13,14 +16,26 @@ heatingValvePin = 23
 doSolenoidValve1 = 12         # NEED TO CONFIG FOR 3 PINS
 doSolenoidValve2 = 16
 doSolenoidValve3 = 20
-doBleedValveStepperPin = 25     # stepper motor (PWM duty cycle maps to open %)
+
+# Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
+bleedValveDirPin = 17
+bleedValveStepPin = 27
+
+# Stepper motor configuration parameters
+STEP_DELAY = 0.001          # 1 ms pulse spacing
+STEPS_PER_POSITION = 18     # ~33 degree rotation per position (0%, 33%, 66%, 100%)
+BLEED_VALVE_POSITIONS = [0.0, 33.0, 66.0, 100.0]
 
 isRpiPresent: bool = True
 try:
     import RPi.GPIO as GPIO
 except:
     isRpiPresent = False
+    GPIO = None
     print("RPi module not present...")
+
+CW = GPIO.HIGH if isRpiPresent else 1
+CCW = GPIO.LOW if isRpiPresent else 0
 
 sourceValveOpen = False
 drainValveOpen = False
@@ -83,6 +98,49 @@ def setDummyDoBleedValve(percent: float):
     print(f"[DUMMY] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
 
 
+def setDoBleedValveMotor(target_percent: float):
+    """
+    Control Wantai 42bygh610-1 stepper motor for the bleed valve across 4 discrete positions:
+    0%, 33%, 66%, and 100%.
+    """
+    global doBleedValvePercent
+
+    if not isRpiPresent:
+        setDummyDoBleedValve(target_percent)
+        return
+
+    positions = BLEED_VALVE_POSITIONS
+    target_percent_clamped = max(0.0, min(100.0, target_percent))
+
+    current_level = min(range(len(positions)), key=lambda i: abs(positions[i] - doBleedValvePercent))
+    target_level = min(range(len(positions)), key=lambda i: abs(positions[i] - target_percent_clamped))
+
+    if current_level == target_level:
+        print(f"[RPI] Bleed valve already at target position ({positions[target_level]:.1f}%)")
+        return
+
+    level_diff = target_level - current_level
+    direction = CW if level_diff > 0 else CCW
+    num_positions = abs(level_diff)
+    total_steps = num_positions * STEPS_PER_POSITION
+
+    print(f"[RPI] Bleed valve moving to {target_percent}%")
+
+    try:
+        GPIO.output(bleedValveDirPin, direction)
+        for _ in range(total_steps):
+            GPIO.output(bleedValveStepPin, GPIO.HIGH)
+            time.sleep(STEP_DELAY)
+            GPIO.output(bleedValveStepPin, GPIO.LOW)
+            time.sleep(STEP_DELAY)
+
+        doBleedValvePercent = positions[target_level]
+        print(f"[RPI] Bleed valve reached {doBleedValvePercent:.1f}%")
+    except Exception as e:
+        logging.error(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
+        print(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
+
+
 # default assignments (PC mode)
 sourceValveState = setDummySourceValveState
 drainValveState = setDummyDrainValveState
@@ -108,10 +166,9 @@ if isRpiPresent:
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
 
-    # Stepper motor driven via PWM on doBleedValveStepperPin
-    GPIO.setup(doBleedValveStepperPin, GPIO.OUT)
-    _bleed_pwm = GPIO.PWM(doBleedValveStepperPin, 50)  # 50 Hz
-    _bleed_pwm.start(0)
+    # Stepper motor (Wantai 42bygh610-1) setup for bleed valve
+    GPIO.setup(bleedValveDirPin, GPIO.OUT)
+    GPIO.setup(bleedValveStepPin, GPIO.OUT)
 
     def setSourceValveState(isValveOpen: bool):
         global sourceValveOpen
@@ -183,13 +240,6 @@ if isRpiPresent:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
             GPIO.output(doSolenoidValve3, GPIO.LOW)
-                
-
-    def setDoBleedValve(percent: float):
-        global doBleedValvePercent
-        doBleedValvePercent = max(0.0, min(100.0, percent))
-        print(f"[RPI] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
-        _bleed_pwm.ChangeDutyCycle(doBleedValvePercent)
 
     # override with RPi implementations
     sourceValveState = setSourceValveState
@@ -199,7 +249,7 @@ if isRpiPresent:
     heatingSystem = setHeatingSystem
     heatingValve = setHeatingValve
     doSolenoidValve = setDoSolenoidValve
-    doBleedValve = setDoBleedValve
+    doBleedValve = setDoBleedValveMotor
 
 
 # -----------------------Control logic-----------------------
