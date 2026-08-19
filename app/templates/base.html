@@ -99,6 +99,10 @@
     </button>
   </div>
 
+  <!-- Alert Audio Elements -->
+  <audio id="audio-alert-warning" data-alert-type="warning" data-alert-level="warning" src="/static/sounds/alert-warning.mp3" preload="auto"></audio>
+  <audio id="audio-alert-critical" data-alert-type="critical" data-alert-level="critical" src="/static/sounds/alert-critical.mp3" preload="auto"></audio>
+
   <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sound.js') }}"></script>
   <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
