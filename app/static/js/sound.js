@@ -1,6 +1,7 @@
 /**
  * Aquatic Hatchery Monitoring System - Sound Alert Handler
  * HTML5 Audio element playback system for WARNING and CRITICAL alarm states.
+ * Plays alert sound continuously in an indefinite loop until interrupted (muted, dismissed, or cleared).
  */
 (function (global) {
   const STORAGE_KEY_MUTED = "hatchery:alert-mute";
@@ -9,7 +10,7 @@
   let currentHighestSeverity = null;
 
   /**
-   * Ensure HTML5 <audio> elements for alert levels exist in the DOM.
+   * Ensure HTML5 <audio> elements for alert levels exist in the DOM with looping enabled.
    */
   function ensureAudioElements() {
     const levels = ["warning", "critical"];
@@ -24,7 +25,10 @@
         elem.setAttribute("data-alert-level", level);
         elem.src = `/static/sounds/alert-${level}.mp3`;
         elem.preload = "auto";
+        elem.loop = true;
         document.body.appendChild(elem);
+      } else {
+        elem.loop = true;
       }
     });
   }
@@ -43,11 +47,31 @@
   }
 
   /**
-   * Play the HTML5 audio element for a given alert level.
+   * Stop and reset all alert audio elements currently playing.
+   */
+  function stopAllAudio() {
+    const levels = ["warning", "critical"];
+    levels.forEach((level) => {
+      const elem = getAudioElement(level);
+      if (elem) {
+        try {
+          elem.pause();
+          elem.currentTime = 0;
+        } catch (e) {
+          // Ignore pause/reset errors
+        }
+      }
+    });
+  }
+
+  /**
+   * Play the HTML5 audio element for a given alert level continuously in an indefinite loop.
    * Gracefully handles missing files or playback restrictions by catching play() errors.
    * @param {string} level Alert level e.g. "warning" or "critical"
    */
   function playAudioForLevel(level) {
+    stopAllAudio();
+
     if (isMuted) {
       return;
     }
@@ -57,6 +81,9 @@
       console.warn(`[HatcherySound] Audio element for alert level '${level}' not found in DOM.`);
       return;
     }
+
+    // Set audio to loop continuously until interrupted/muted/cleared
+    audioElement.loop = true;
 
     try {
       audioElement.currentTime = 0;
@@ -118,6 +145,7 @@
 
   /**
    * Set muted state and store in localStorage under key "hatchery:alert-mute".
+   * Interrupts/stops playback if muted, or resumes looping if unmuted while an alert is active.
    * @param {boolean} muted
    */
   function setMuted(muted) {
@@ -127,6 +155,13 @@
     } catch (e) {
       console.warn("[HatcherySound] Could not write to localStorage:", e);
     }
+
+    if (isMuted) {
+      stopAllAudio();
+    } else if (currentHighestSeverity !== null) {
+      playAudioForLevel(currentHighestSeverity.toLowerCase());
+    }
+
     updateToggleButtonsUI();
   }
 
@@ -139,7 +174,7 @@
 
   /**
    * Main integration method called when active metric alerts change.
-   * Plays audio only on state transitions (alert level change).
+   * Plays audio continuously on state transitions and stops when cleared.
    * @param {Map|Object} activeAlertsMap Map of active metric alerts e.g. { metric: { status: "WARNING"|"CRITICAL" } }
    */
   function updateAlarmState(activeAlertsMap) {
@@ -165,7 +200,9 @@
     currentHighestSeverity = newHighestSeverity;
     updateToggleButtonsUI();
 
-    if (levelChanged && newHighestSeverity !== null) {
+    if (newHighestSeverity === null) {
+      stopAllAudio();
+    } else if (levelChanged) {
       playAudioForLevel(newHighestSeverity.toLowerCase());
     }
   }
@@ -202,6 +239,7 @@
     bindSoundToggle,
     playAudioForLevel,
     getAudioElement,
+    stopAllAudio,
   };
 
   if (document.readyState === "loading") {

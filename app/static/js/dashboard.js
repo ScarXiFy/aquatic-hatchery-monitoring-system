@@ -427,6 +427,10 @@
       dismissedAlertKeys.add(item.key);
     });
 
+    if (window.HatcherySound && typeof window.HatcherySound.stopAllAudio === "function") {
+      window.HatcherySound.stopAllAudio();
+    }
+
     notificationSystemState = "dismissed";
     loadNotificationsFromDB();
   }
