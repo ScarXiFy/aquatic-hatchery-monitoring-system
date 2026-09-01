@@ -3,23 +3,31 @@ import time
 import logging
 
 # TEMPORARY PIN PLACEMENTS
-sourceValvePin = 18
-drainValvePin = 24
+sourceValvePin = 6
+drainValvePin = 5
 
 # Temperature control pins
 coolingSystemPin = 5
 coolingValvePin = 21
 heatingSystemPin = 22
 heatingValvePin = 23
+# pel1Pin = 25
+# pel2Pin = 8
+# pel3Pin = 7
+# pel4Pin = 1
+# fan1Pin = 12
+# fan2Pin = 16
+# fan3Pin = 20
+# fan4Pin = 21
 
 # Dissolved oxygen control pins
-doSolenoidValve1 = 12         # NEED TO CONFIG FOR 3 PINS
-doSolenoidValve2 = 16
-doSolenoidValve3 = 20
+doSolenoidValve1 = 17         # NEED TO CONFIG FOR 3 PINS
+doSolenoidValve2 = 27
+doSolenoidValve3 = 22
 
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
-bleedValveDirPin = 17
-bleedValveStepPin = 27
+bleedValveDirPin = 10
+bleedValveStepPin = 9
 
 # Stepper motor configuration parameters
 STEP_DELAY = 0.001          # 1 ms pulse spacing
