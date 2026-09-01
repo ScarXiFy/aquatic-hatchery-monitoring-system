@@ -277,14 +277,14 @@ if isRpiPresent:
         global coolingSystemActive
         coolingSystemActive = active
         print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
-        GPIO.output(pel1Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(pel2Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(pel3Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(pel4Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(fan1Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(fan2Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(fan3Pin, GPIO.HIGH if active else GPIO.LOW)
-        GPIO.output(fan4Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel1Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel2Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
 
     def setCoolingValve(isOpen: bool):
         global coolingValveOpen
