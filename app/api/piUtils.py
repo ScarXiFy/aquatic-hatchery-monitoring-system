@@ -7,18 +7,18 @@ sourceValvePin = 6
 drainValvePin = 5
 
 # Temperature control pins
-coolingSystemPin = 5
-coolingValvePin = 21
-heatingSystemPin = 22
+#coolingSystemPin = 5
+coolingValvePin = 24
+heatingSystemPin = 19
 heatingValvePin = 23
-# pel1Pin = 25
-# pel2Pin = 8
-# pel3Pin = 7
-# pel4Pin = 1
-# fan1Pin = 12
-# fan2Pin = 16
-# fan3Pin = 20
-# fan4Pin = 21
+pel1Pin = 25
+pel2Pin = 8
+pel3Pin = 7
+pel4Pin = 1
+fan1Pin = 12
+fan2Pin = 16
+fan3Pin = 20
+fan4Pin = 21
 
 # Dissolved oxygen control pins
 doSolenoidValve1 = 17         # NEED TO CONFIG FOR 3 PINS
@@ -242,7 +242,14 @@ if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setup(sourceValvePin, GPIO.OUT)
     GPIO.setup(drainValvePin, GPIO.OUT)
-    GPIO.setup(coolingSystemPin, GPIO.OUT)
+    GPIO.setup(pel1Pin, GPIO.OUT)
+    GPIO.setup(pel2Pin, GPIO.OUT)
+    GPIO.setup(pel3Pin, GPIO.OUT)
+    GPIO.setup(pel4Pin, GPIO.OUT)
+    GPIO.setup(fan1Pin, GPIO.OUT)
+    GPIO.setup(fan2Pin, GPIO.OUT)
+    GPIO.setup(fan3Pin, GPIO.OUT)
+    GPIO.setup(fan4Pin, GPIO.OUT)
     GPIO.setup(coolingValvePin, GPIO.OUT)
     GPIO.setup(heatingSystemPin, GPIO.OUT)
     GPIO.setup(heatingValvePin, GPIO.OUT)
@@ -270,7 +277,14 @@ if isRpiPresent:
         global coolingSystemActive
         coolingSystemActive = active
         print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
-        GPIO.output(coolingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel1Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel2Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel3Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel4Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(fan1Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(fan2Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(fan3Pin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(fan4Pin, GPIO.HIGH if active else GPIO.LOW)
 
     def setCoolingValve(isOpen: bool):
         global coolingValveOpen
