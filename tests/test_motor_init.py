@@ -34,7 +34,7 @@ class TestMotorInitAndPersistence(unittest.TestCase):
         self.assertEqual(pos2, 2)
 
     def test_motor_init_when_saved_position_greater_than_zero(self):
-        """Test initializeBleedValveMotor enables driver and resets motor CW when saved position > 0."""
+        """Test initializeBleedValveMotor restores saved position without physical motor movement."""
         save_motor_state("bleed_valve", 2)
         piUtils.motorInit = False
 
@@ -44,21 +44,18 @@ class TestMotorInitAndPersistence(unittest.TestCase):
 
         with patch.object(piUtils, 'isRpiPresent', True), \
              patch.object(piUtils, 'GPIO', mock_gpio), \
-             patch.object(piUtils, 'CW', 1), \
-             patch.object(piUtils, 'CCW', 0), \
              patch('time.sleep', return_value=None):
 
             piUtils.initializeBleedValveMotor()
             self.assertTrue(piUtils.motorInit)
-            self.assertEqual(piUtils.doBleedValvePercent, 0.0)
-            self.assertEqual(load_motor_state("bleed_valve"), 0)
+            self.assertEqual(piUtils.doBleedValvePercent, 66.0)
+            self.assertEqual(load_motor_state("bleed_valve"), 2)
 
             # Verify ENABLE pin is pulled LOW to enable driver
-            mock_gpio.output.assert_any_call(piUtils.bleedValveEnablePin, 0)
-            # Verify CW output and 36 step pulses (2 * 18 = 36)
-            mock_gpio.output.assert_any_call(piUtils.bleedValveDirPin, 1)
+            mock_gpio.output.assert_called_once_with(piUtils.bleedValveEnablePin, 0)
+            # Verify NO step pulses were sent (no motor movement during startup)
             step_high_calls = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(piUtils.bleedValveStepPin, 1)]
-            self.assertEqual(len(step_high_calls), 36)
+            self.assertEqual(len(step_high_calls), 0)
 
     def test_set_do_bleed_valve_blocked_when_not_initialized(self):
         """Test setDoBleedValveMotor skips movement if motorInit is False."""

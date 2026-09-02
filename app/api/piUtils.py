@@ -142,15 +142,15 @@ def disableBleedValveMotor():
 
 def initializeBleedValveMotor(app=None):
     """
-    Initialize bleed valve stepper motor on startup. Reads stored motor position from DB,
-    resets motor CCW to position 0 (fully closed) if needed, sets motorInit = True, and
-    saves position 0 in DB.
+    Initialize bleed valve stepper motor on startup. Reads stored motor position from DB
+    and restores that as the current valve position without adjusting physical motor movement.
+    Sets motorInit = True.
     """
     global motorInit, doBleedValvePercent
 
     def _do_init():
         global motorInit, doBleedValvePercent
-        from app.models import load_motor_state, save_motor_state
+        from app.models import load_motor_state
 
         enableBleedValveMotor()
 
@@ -158,35 +158,12 @@ def initializeBleedValveMotor(app=None):
         if saved_pos is None or not isinstance(saved_pos, int):
             saved_pos = 0
 
-        saved_pos = max(0, min(3, saved_pos))
-
-        if saved_pos > 0:
-            total_steps = saved_pos * STEPS_PER_POSITION
-            if isRpiPresent and GPIO is not None:
-                print(f"[RPI] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CW)...")
-                try:
-                    GPIO.output(bleedValveEnablePin, GPIO.LOW)
-                    GPIO.output(bleedValveDirPin, CW)
-                    for _ in range(total_steps):
-                        GPIO.output(bleedValveStepPin, GPIO.HIGH)
-                        time.sleep(STEP_DELAY)
-                        GPIO.output(bleedValveStepPin, GPIO.LOW)
-                        time.sleep(STEP_DELAY)
-                except Exception as e:
-                    logging.warning(f"[RPI] GPIO exception during motor init reset: {e}")
-                    print(f"[RPI] GPIO exception during motor init reset: {e}")
-            else:
-                print(f"[DUMMY] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CW)...")
-
-        doBleedValvePercent = 0.0
-        try:
-            save_motor_state("bleed_valve", 0)
-        except Exception as e:
-            logging.warning(f"Failed to save motor state during initialization: {e}")
+        saved_pos = max(0, min(len(BLEED_VALVE_POSITIONS) - 1, saved_pos))
+        doBleedValvePercent = BLEED_VALVE_POSITIONS[saved_pos]
 
         motorInit = True
         prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
-        print(f"{prefix} Bleed valve motor initialized to position 0 (fully closed)")
+        print(f"{prefix} Bleed valve motor restored to position {saved_pos} ({doBleedValvePercent:.1f}%) without physical movement")
 
     if app is not None:
         with app.app_context():
