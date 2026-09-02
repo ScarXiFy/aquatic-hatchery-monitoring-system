@@ -26,8 +26,8 @@ doSolenoidValve2 = 27
 doSolenoidValve3 = 22
 
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
-bleedValveDirPin = 10
-bleedValveStepPin = 9
+bleedValveDirPin = 14
+bleedValveStepPin = 15
 
 # Stepper motor configuration parameters
 STEP_DELAY = 0.001          # 1 ms pulse spacing
