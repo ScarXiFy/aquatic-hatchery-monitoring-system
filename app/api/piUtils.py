@@ -1,3 +1,4 @@
+import atexit
 import random
 import time
 import logging
@@ -28,6 +29,7 @@ doSolenoidValve3 = 22
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
 bleedValveDirPin = 14
 bleedValveStepPin = 15
+bleedValveEnablePin = 10
 
 # Stepper motor configuration parameters
 STEP_DELAY = 0.001          # 1 ms pulse spacing
@@ -44,6 +46,8 @@ except:
 
 CW = GPIO.HIGH if isRpiPresent else 1
 CCW = GPIO.LOW if isRpiPresent else 0
+MOTOR_ENABLE = GPIO.LOW if isRpiPresent else 0
+MOTOR_DISABLE = GPIO.HIGH if isRpiPresent else 1
 
 sourceValveOpen = False
 drainValveOpen = False
@@ -55,6 +59,7 @@ heatingValveOpen = False
 
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
+bleedValveDriverEnabled = False
 _dosvcounter = 3
 motorInit: bool = False
 
@@ -107,6 +112,34 @@ def setDummyDoBleedValve(percent: float):
     print(f"[DUMMY] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
 
 
+def enableBleedValveMotor():
+    """Enable the stepper motor driver (LOW = enabled)."""
+    global bleedValveDriverEnabled
+    bleedValveDriverEnabled = True
+    if isRpiPresent and GPIO is not None:
+        try:
+            GPIO.output(bleedValveEnablePin, GPIO.LOW)
+            print("[RPI] Bleed valve motor driver ENABLED (pin LOW)")
+        except Exception as e:
+            logging.error(f"[RPI] Failed to enable bleed valve motor driver: {e}")
+    else:
+        print("[DUMMY] Bleed valve motor driver ENABLED")
+
+
+def disableBleedValveMotor():
+    """Disable the stepper motor driver (HIGH = disabled)."""
+    global bleedValveDriverEnabled
+    bleedValveDriverEnabled = False
+    if isRpiPresent and GPIO is not None:
+        try:
+            GPIO.output(bleedValveEnablePin, GPIO.HIGH)
+            print("[RPI] Bleed valve motor driver DISABLED (pin HIGH)")
+        except Exception as e:
+            logging.error(f"[RPI] Failed to disable bleed valve motor driver: {e}")
+    else:
+        print("[DUMMY] Bleed valve motor driver DISABLED")
+
+
 def initializeBleedValveMotor(app=None):
     """
     Initialize bleed valve stepper motor on startup. Reads stored motor position from DB,
@@ -119,6 +152,8 @@ def initializeBleedValveMotor(app=None):
         global motorInit, doBleedValvePercent
         from app.models import load_motor_state, save_motor_state
 
+        enableBleedValveMotor()
+
         saved_pos = load_motor_state("bleed_valve")
         if saved_pos is None or not isinstance(saved_pos, int):
             saved_pos = 0
@@ -130,6 +165,7 @@ def initializeBleedValveMotor(app=None):
             if isRpiPresent and GPIO is not None:
                 print(f"[RPI] Realigning bleed valve motor from stored position {saved_pos} to 0 ({total_steps} steps CW)...")
                 try:
+                    GPIO.output(bleedValveEnablePin, GPIO.LOW)
                     GPIO.output(bleedValveDirPin, CW)
                     for _ in range(total_steps):
                         GPIO.output(bleedValveStepPin, GPIO.HIGH)
@@ -205,6 +241,7 @@ def setDoBleedValveMotor(target_percent: float):
     print(f"[RPI] Bleed valve moving to {target_percent}%")
 
     try:
+        GPIO.output(bleedValveEnablePin, GPIO.LOW)
         GPIO.output(bleedValveDirPin, direction)
         for _ in range(total_steps):
             GPIO.output(bleedValveStepPin, GPIO.HIGH)
@@ -240,6 +277,7 @@ doBleedValve = setDummyDoBleedValve
 # RPi implementations (GPIO mode)
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
     GPIO.setup(sourceValvePin, GPIO.OUT)
     GPIO.setup(drainValvePin, GPIO.OUT)
     GPIO.setup(pel1Pin, GPIO.OUT)
@@ -260,6 +298,9 @@ if isRpiPresent:
     # Stepper motor (Wantai 42bygh610-1) setup for bleed valve
     GPIO.setup(bleedValveDirPin, GPIO.OUT)
     GPIO.setup(bleedValveStepPin, GPIO.OUT)
+    GPIO.setup(bleedValveEnablePin, GPIO.OUT)
+    GPIO.output(bleedValveEnablePin, GPIO.LOW)  # Enable driver (LOW = enabled)
+    bleedValveDriverEnabled = True
 
     def setSourceValveState(isValveOpen: bool):
         global sourceValveOpen
@@ -524,3 +565,25 @@ def read_secondary_temp_sensor():
     except Exception as e:
         print(f"[RPI] Mixing tank DS18B20 read failed ({e}) - using simulated value")
         return None
+
+
+def cleanupGpio():
+    """
+    Disable stepper motor driver (ENABLE pin HIGH) and cleanup GPIO pins on shutdown.
+    """
+    global bleedValveDriverEnabled
+    if isRpiPresent and GPIO is not None:
+        try:
+            print("[RPI] Disabling bleed valve motor driver (pin HIGH)...")
+            GPIO.output(bleedValveEnablePin, GPIO.HIGH)
+            bleedValveDriverEnabled = False
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while disabling motor driver: {e}")
+        try:
+            print("[RPI] Cleaning up GPIO pins...")
+            GPIO.cleanup()
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while cleaning up GPIO: {e}")
+
+
+atexit.register(cleanupGpio)
