@@ -20,6 +20,7 @@ fan1Pin = 12
 fan2Pin = 16
 fan3Pin = 20
 fan4Pin = 21
+mixerPin = 9
 
 # Dissolved oxygen control pins
 doSolenoidValve1 = 17         # NEED TO CONFIG FOR 3 PINS
