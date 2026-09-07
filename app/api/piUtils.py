@@ -2,6 +2,12 @@ import atexit
 import random
 import time
 import logging
+import threading
+
+# Timing configuration for heating and mixing control
+HEATER_PULSE_DURATION = 1.0       # Duration in seconds the heater stays ON per pulse
+HEATER_CHECK_INTERVAL = 30.0      # Wait time in seconds between heating checks/pulses
+MIXER_SHUTDOWN_DELAY = 20.0       # Run-on time in seconds for mixer after cooling/heating stops
 
 # TEMPORARY PIN PLACEMENTS
 sourceValvePin = 6
@@ -57,6 +63,16 @@ coolingSystemActive = False
 coolingValveOpen = False
 heatingSystemActive = False
 heatingValveOpen = False
+heaterActive = False
+mixerActive = False
+
+# Synchronization for mixer and heater
+_mixer_timer = None
+_mixer_lock = threading.Lock()
+
+_heating_thread = None
+_heating_stop_event = threading.Event()
+_heating_lock = threading.Lock()
 
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
@@ -76,11 +92,74 @@ def setDummyDrainValveState(isValveOpen: bool):
     drainValveOpen = isValveOpen
     print(f"[DUMMY] drain valve -> {drainValveOpen}")
 
+def setDummyMixer(active: bool):
+    global mixerActive
+    mixerActive = active
+    print(f"[DUMMY] mixer motor -> {'ON' if active else 'OFF'}")
+
+def _setDummyHeaterRelay(active: bool):
+    global heaterActive
+    heaterActive = active
+    print(f"[DUMMY] heater relay -> {'ON' if active else 'OFF'}")
+
+_set_heater_relay = _setDummyHeaterRelay
+
+def _update_mixer_state():
+    global _mixer_timer
+    with _mixer_lock:
+        temp_system_active = coolingSystemActive or heatingSystemActive
+        if temp_system_active:
+            if _mixer_timer is not None:
+                _mixer_timer.cancel()
+                _mixer_timer = None
+            if not mixerActive:
+                mixer(True)
+        else:
+            if mixerActive and _mixer_timer is None:
+                def _delayed_mixer_off():
+                    global _mixer_timer
+                    with _mixer_lock:
+                        _mixer_timer = None
+                        if not coolingSystemActive and not heatingSystemActive:
+                            mixer(False)
+                _mixer_timer = threading.Timer(MIXER_SHUTDOWN_DELAY, _delayed_mixer_off)
+                _mixer_timer.daemon = True
+                _mixer_timer.start()
+                print(f"[CONTROL] Cooling/heating disabled - mixer will turn OFF in {MIXER_SHUTDOWN_DELAY}s")
+
+def _heating_worker():
+    while not _heating_stop_event.is_set() and heatingSystemActive:
+        _set_heater_relay(True)
+        if _heating_stop_event.wait(HEATER_PULSE_DURATION):
+            _set_heater_relay(False)
+            break
+        _set_heater_relay(False)
+
+        if _heating_stop_event.wait(HEATER_CHECK_INTERVAL):
+            break
+
+def setRpiMixer(active: bool):
+    global mixerActive
+    mixerActive = active
+    print(f"[RPI] mixer motor -> {'ON' if active else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(mixerPin, GPIO.HIGH if active else GPIO.LOW)
+
+setMixer = setRpiMixer
+
+def _setRpiHeaterRelay(active: bool):
+    global heaterActive
+    heaterActive = active
+    print(f"[RPI] heater relay -> {'ON' if active else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+
 # Temperature
 def setDummyCoolingSystem(active: bool):
     global coolingSystemActive
     coolingSystemActive = active
     print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
+    _update_mixer_state()
 
 def setDummyCoolingValve(isOpen: bool):
     global coolingValveOpen
@@ -88,9 +167,21 @@ def setDummyCoolingValve(isOpen: bool):
     print(f"[DUMMY] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
 
 def setDummyHeatingSystem(active: bool):
-    global heatingSystemActive
-    heatingSystemActive = active
-    print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
+    global heatingSystemActive, _heating_thread
+    with _heating_lock:
+        heatingSystemActive = active
+        print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
+        if active:
+            _update_mixer_state()
+            if _heating_thread is None or not _heating_thread.is_alive():
+                _heating_stop_event.clear()
+                _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
+                _heating_thread.start()
+        else:
+            _heating_stop_event.set()
+            _set_heater_relay(False)
+            _heating_thread = None
+            _update_mixer_state()
 
 def setDummyHeatingValve(isOpen: bool):
     global heatingValveOpen
@@ -248,6 +339,7 @@ coolingSystem = setDummyCoolingSystem
 coolingValve = setDummyCoolingValve
 heatingSystem = setDummyHeatingSystem
 heatingValve = setDummyHeatingValve
+mixer = setDummyMixer
 
 doSolenoidValve = setDummyDoSolenoidValve
 doBleedValve = setDummyDoBleedValve
@@ -267,8 +359,9 @@ if isRpiPresent:
     GPIO.setup(fan3Pin, GPIO.OUT)
     GPIO.setup(fan4Pin, GPIO.OUT)
     GPIO.setup(coolingValvePin, GPIO.OUT)
-    GPIO.setup(heatingSystemPin, GPIO.OUT)
+    GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(heatingValvePin, GPIO.OUT)
+    GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
@@ -292,6 +385,9 @@ if isRpiPresent:
         print(f"[RPI] drain valve -> {drainValveOpen}")
         GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
 
+    setMixer = setRpiMixer
+    _set_heater_relay = _setRpiHeaterRelay
+
     def setCoolingSystem(active: bool):
         global coolingSystemActive
         coolingSystemActive = active
@@ -304,6 +400,7 @@ if isRpiPresent:
         GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
         GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
         GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
+        _update_mixer_state()
 
     def setCoolingValve(isOpen: bool):
         global coolingValveOpen
@@ -312,10 +409,21 @@ if isRpiPresent:
         GPIO.output(coolingValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
 
     def setHeatingSystem(active: bool):
-        global heatingSystemActive
-        heatingSystemActive = active
-        print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
-        GPIO.output(heatingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+        global heatingSystemActive, _heating_thread
+        with _heating_lock:
+            heatingSystemActive = active
+            print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
+            if active:
+                _update_mixer_state()
+                if _heating_thread is None or not _heating_thread.is_alive():
+                    _heating_stop_event.clear()
+                    _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
+                    _heating_thread.start()
+            else:
+                _heating_stop_event.set()
+                _set_heater_relay(False)
+                _heating_thread = None
+                _update_mixer_state()
 
     def setHeatingValve(isOpen: bool):
         global heatingValveOpen
@@ -365,6 +473,7 @@ if isRpiPresent:
     coolingValve = setCoolingValve
     heatingSystem = setHeatingSystem
     heatingValve = setHeatingValve
+    mixer = setMixer
     doSolenoidValve = setDoSolenoidValve
     doBleedValve = setDoBleedValveMotor
 
@@ -420,7 +529,7 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
-        elif secondary_temp < low:
+        else:
             print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
@@ -547,10 +656,32 @@ def read_secondary_temp_sensor():
 
 def cleanupGpio():
     """
-    Disable stepper motor driver (ENABLE pin HIGH) and cleanup GPIO pins on shutdown.
+    Disable stepper motor driver (ENABLE pin HIGH), turn off heater relay,
+    cancel mixer timer, turn off mixer, and cleanup GPIO pins on shutdown.
     """
-    global bleedValveDriverEnabled
+    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_thread
+    if _mixer_timer is not None:
+        try:
+            _mixer_timer.cancel()
+            _mixer_timer = None
+        except Exception:
+            pass
+
+    with _heating_lock:
+        heatingSystemActive = False
+        _heating_stop_event.set()
+        _set_heater_relay(False)
+        _heating_thread = None
+
+    mixer(False)
+
     if isRpiPresent and GPIO is not None:
+        try:
+            print("[RPI] Turning off heater relay and mixer...")
+            GPIO.output(heatingSystemPin, GPIO.LOW)
+            GPIO.output(mixerPin, GPIO.LOW)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting heater/mixer: {e}")
         try:
             print("[RPI] Disabling bleed valve motor driver (pin HIGH)...")
             GPIO.output(bleedValveEnablePin, GPIO.HIGH)
