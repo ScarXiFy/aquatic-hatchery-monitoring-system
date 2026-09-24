@@ -18,6 +18,7 @@ drainValvePin = 5
 coolingValvePin = 24
 heatingSystemPin = 19
 heatingValvePin = 23
+mainValvePin = 26
 pel1Pin = 25
 pel2Pin = 8
 pel3Pin = 7
@@ -58,6 +59,7 @@ MOTOR_DISABLE = GPIO.HIGH if isRpiPresent else 1
 
 sourceValveOpen = False
 drainValveOpen = False
+mainValveOpen = False
 
 coolingSystemActive = False
 coolingValveOpen = False
@@ -91,6 +93,24 @@ def setDummyDrainValveState(isValveOpen: bool):
     global drainValveOpen
     drainValveOpen = isValveOpen
     print(f"[DUMMY] drain valve -> {drainValveOpen}")
+
+def setDummyMainValve(isOpen: bool):
+    global mainValveOpen
+    mainValveOpen = isOpen
+    print(f"[DUMMY] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
+
+# Default main valve pointer (PC mode)
+mainValve = setDummyMainValve
+mainValveState = setDummyMainValve
+
+def _update_main_valve_state():
+    temp_system_active = coolingSystemActive or heatingSystemActive
+    if temp_system_active:
+        if not mainValveOpen:
+            mainValve(True)
+    else:
+        if mainValveOpen:
+            mainValve(False)
 
 def setDummyMixer(active: bool):
     global mixerActive
@@ -154,12 +174,22 @@ def _setRpiHeaterRelay(active: bool):
     if isRpiPresent and GPIO is not None:
         GPIO.output(heatingSystemPin, GPIO.HIGH if active else GPIO.LOW)
 
+def setRpiMainValve(isOpen: bool):
+    global mainValveOpen
+    mainValveOpen = isOpen
+    print(f"[RPI] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(mainValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+
+setMainValve = setRpiMainValve
+
 # Temperature
 def setDummyCoolingSystem(active: bool):
     global coolingSystemActive
     coolingSystemActive = active
     print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
     _update_mixer_state()
+    _update_main_valve_state()
 
 def setDummyCoolingValve(isOpen: bool):
     global coolingValveOpen
@@ -173,6 +203,7 @@ def setDummyHeatingSystem(active: bool):
         print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
         if active:
             _update_mixer_state()
+            _update_main_valve_state()
             if _heating_thread is None or not _heating_thread.is_alive():
                 _heating_stop_event.clear()
                 _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
@@ -182,6 +213,7 @@ def setDummyHeatingSystem(active: bool):
             _set_heater_relay(False)
             _heating_thread = None
             _update_mixer_state()
+            _update_main_valve_state()
 
 def setDummyHeatingValve(isOpen: bool):
     global heatingValveOpen
@@ -334,6 +366,8 @@ def setDoBleedValveMotor(target_percent: float):
 # default assignments (PC mode)
 sourceValveState = setDummySourceValveState
 drainValveState = setDummyDrainValveState
+mainValve = setDummyMainValve
+mainValveState = setDummyMainValve
 
 coolingSystem = setDummyCoolingSystem
 coolingValve = setDummyCoolingValve
@@ -350,6 +384,7 @@ if isRpiPresent:
     GPIO.setwarnings(False)
     GPIO.setup(sourceValvePin, GPIO.OUT)
     GPIO.setup(drainValvePin, GPIO.OUT)
+    GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(pel1Pin, GPIO.OUT)
     GPIO.setup(pel2Pin, GPIO.OUT)
     GPIO.setup(pel3Pin, GPIO.OUT)
@@ -385,6 +420,7 @@ if isRpiPresent:
         print(f"[RPI] drain valve -> {drainValveOpen}")
         GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
 
+    setMainValve = setRpiMainValve
     setMixer = setRpiMixer
     _set_heater_relay = _setRpiHeaterRelay
 
@@ -401,6 +437,7 @@ if isRpiPresent:
         GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
         GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
         _update_mixer_state()
+        _update_main_valve_state()
 
     def setCoolingValve(isOpen: bool):
         global coolingValveOpen
@@ -415,6 +452,7 @@ if isRpiPresent:
             print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
             if active:
                 _update_mixer_state()
+                _update_main_valve_state()
                 if _heating_thread is None or not _heating_thread.is_alive():
                     _heating_stop_event.clear()
                     _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
@@ -424,6 +462,7 @@ if isRpiPresent:
                 _set_heater_relay(False)
                 _heating_thread = None
                 _update_mixer_state()
+                _update_main_valve_state()
 
     def setHeatingValve(isOpen: bool):
         global heatingValveOpen
@@ -469,6 +508,8 @@ if isRpiPresent:
     # override with RPi implementations
     sourceValveState = setSourceValveState
     drainValveState = setDrainValveState
+    mainValve = setMainValve
+    mainValveState = setMainValve
     coolingSystem = setCoolingSystem
     coolingValve = setCoolingValve
     heatingSystem = setHeatingSystem
@@ -515,12 +556,14 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
+            mainValve(True)
         elif secondary_temp < low:
             print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
             heatingValve(True)
+            mainValve(True)
 
     elif temperature < low:
         if secondary_temp > high:
@@ -529,12 +572,14 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
+            mainValve(True)
         else:
             print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
             heatingValve(True)
+            mainValve(True)
 
     else:
         print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
@@ -542,6 +587,7 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
         coolingValve(False)
         heatingSystem(False)
         heatingValve(False)
+        mainValve(False)
 
 
 def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: float = DO_TOLERANCE):
@@ -674,8 +720,14 @@ def cleanupGpio():
         _heating_thread = None
 
     mixer(False)
+    mainValve(False)
 
     if isRpiPresent and GPIO is not None:
+        try:
+            print("[RPI] Closing main water valve...")
+            GPIO.output(mainValvePin, GPIO.LOW)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting main valve: {e}")
         try:
             print("[RPI] Turning off heater relay and mixer...")
             GPIO.output(heatingSystemPin, GPIO.LOW)

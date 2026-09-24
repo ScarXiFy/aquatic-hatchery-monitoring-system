@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, current_app
-from app.api.piUtils import sourceValveState, drainValveState
+from app.api.piUtils import sourceValveState, drainValveState, mainValve
 
 from app.models import (
     get_history,
@@ -21,6 +21,7 @@ CONTROL_STATE = {
     "valves": {
         "source": True,
         "drain": False,
+        "main": False,
     },
     "sliders": {
         "temperature_setpoint": 26,
@@ -113,8 +114,11 @@ def set_valve(name):
         sourceValveState(is_open)
     elif name == "drain":
         drainValveState(is_open)
+    elif name == "main":
+        mainValve(is_open)
     else:
         return ("Unknown valve", 400)
+    CONTROL_STATE["valves"][name] = is_open
     return ("", 204)
 
 
