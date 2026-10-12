@@ -52,8 +52,8 @@ except:
     GPIO = None
     print("RPi module not present...")
 
-CCW = GPIO.HIGH if isRpiPresent else 1
-CW = GPIO.LOW if isRpiPresent else 0
+CW = GPIO.HIGH if isRpiPresent else 1
+CCW = GPIO.LOW if isRpiPresent else 0
 MOTOR_ENABLE = GPIO.LOW if isRpiPresent else 0
 MOTOR_DISABLE = GPIO.HIGH if isRpiPresent else 1
 
