@@ -41,7 +41,7 @@ bleedValveEnablePin = 10
 
 # Stepper motor configuration parameters
 STEP_DELAY = 0.001          # 1 ms pulse spacing
-STEPS_PER_POSITION = 18     # ~33 degree rotation per position (0%, 33%, 66%, 100%)
+STEPS_PER_POSITION = 200     # ~33 degree rotation per position (0%, 33%, 66%, 100%)
 BLEED_VALVE_POSITIONS = [0.0, 33.0, 66.0, 100.0]
 
 isRpiPresent: bool = True
@@ -52,8 +52,8 @@ except:
     GPIO = None
     print("RPi module not present...")
 
-CW = GPIO.HIGH if isRpiPresent else 1
-CCW = GPIO.LOW if isRpiPresent else 0
+CCW = GPIO.HIGH if isRpiPresent else 1
+CW = GPIO.LOW if isRpiPresent else 0
 MOTOR_ENABLE = GPIO.LOW if isRpiPresent else 0
 MOTOR_DISABLE = GPIO.HIGH if isRpiPresent else 1
 
