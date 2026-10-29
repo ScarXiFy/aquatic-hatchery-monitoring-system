@@ -755,6 +755,16 @@
     if (payload.sliders) {
       updateSliders(payload.sliders);
     }
+    if (payload.valves) {
+      document.querySelectorAll("[data-valve]").forEach((button) => {
+        const v = button.dataset.valve;
+        if (v in payload.valves) {
+          const isOpen = Boolean(payload.valves[v]);
+          button.setAttribute("aria-pressed", String(isOpen));
+          button.innerHTML = `<i></i> ${isOpen ? "Open" : "Closed"}`;
+        }
+      });
+    }
   }
 
   async function loadLatestReading() {
@@ -1043,10 +1053,126 @@
     });
   }
 
+  function initializeHomeSlider() {
+    const viewport = document.getElementById("home-viewport");
+    if (!viewport) return;
+
+    const slides = viewport.querySelectorAll(".screen-slide");
+    const pills = document.querySelectorAll("#home-screen-nav .screen-nav-pill");
+    const prevBtn = document.getElementById("home-prev-btn");
+    const nextBtn = document.getElementById("home-next-btn");
+    const counter = document.getElementById("home-screen-counter");
+
+    let currentIdx = 0;
+    const totalSlides = slides.length;
+
+    function updateNav(idx) {
+      currentIdx = idx;
+      pills.forEach((pill, i) => {
+        if (i === idx) {
+          pill.classList.add("active");
+          pill.setAttribute("aria-current", "true");
+        } else {
+          pill.classList.remove("active");
+          pill.removeAttribute("aria-current");
+        }
+      });
+
+      if (counter) {
+        counter.textContent = `${idx + 1} / ${totalSlides}`;
+      }
+
+      if (prevBtn) {
+        prevBtn.style.opacity = idx === 0 ? "0.35" : "1";
+        prevBtn.style.pointerEvents = idx === 0 ? "none" : "auto";
+      }
+      if (nextBtn) {
+        nextBtn.style.opacity = idx === totalSlides - 1 ? "0.35" : "1";
+        nextBtn.style.pointerEvents = idx === totalSlides - 1 ? "none" : "auto";
+      }
+    }
+
+    function scrollToSlide(idx, smooth = true) {
+      if (idx < 0) idx = 0;
+      if (idx >= totalSlides) idx = totalSlides - 1;
+      currentIdx = idx;
+      const targetSlide = slides[idx];
+      if (targetSlide) {
+        viewport.scrollTo({
+          left: targetSlide.offsetLeft,
+          behavior: smooth ? "smooth" : "auto"
+        });
+      }
+      updateNav(idx);
+    }
+
+    pills.forEach((pill, i) => {
+      pill.addEventListener("click", () => scrollToSlide(i, true));
+    });
+
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => scrollToSlide(currentIdx - 1, true));
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => scrollToSlide(currentIdx + 1, true));
+    }
+
+    let scrollRaf = null;
+    viewport.addEventListener("scroll", () => {
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = requestAnimationFrame(() => {
+        const width = viewport.clientWidth;
+        if (width > 0) {
+          const newIdx = Math.round(viewport.scrollLeft / width);
+          if (newIdx !== currentIdx && newIdx >= 0 && newIdx < totalSlides) {
+            updateNav(newIdx);
+          }
+        }
+      });
+    }, { passive: true });
+
+    // Touch swipe gesture handling
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isSwiping = false;
+
+    viewport.addEventListener("touchstart", (e) => {
+      if (e.target.closest("input[type='range']") || e.target.closest("button") || e.target.closest("input")) {
+        isSwiping = false;
+        return;
+      }
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      isSwiping = true;
+    }, { passive: true });
+
+    viewport.addEventListener("touchend", (e) => {
+      if (!isSwiping) return;
+      isSwiping = false;
+      const touchEndX = e.changedTouches[0].clientX;
+      const touchEndY = e.changedTouches[0].clientY;
+      const diffX = touchEndX - touchStartX;
+      const diffY = touchEndY - touchStartY;
+
+      if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 1.3) {
+        if (diffX < 0) {
+          // Swiped left -> scroll to next slide to the right
+          scrollToSlide(currentIdx + 1, true);
+        } else {
+          // Swiped right -> scroll to prev slide to the left
+          scrollToSlide(currentIdx - 1, true);
+        }
+      }
+    }, { passive: true });
+
+    updateNav(0);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     updateDateTime();
     setInterval(updateDateTime, 30000);
     bindControls();
+    initializeHomeSlider();
     bindNotificationUI();
     loadControls()
       .then(loadThresholds)
