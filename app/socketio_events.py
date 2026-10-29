@@ -1,7 +1,7 @@
 from flask import current_app
 
 from app.sensors.simulator import start_sensor_simulator
-from app.api.piUtils import initializeBleedValveMotor
+from app.api.piUtils import initializeBleedValveMotor, initializeLed
 
 _simulator_started = False
 
@@ -20,6 +20,7 @@ def start_background_simulator(socketio):
     _simulator_started = True
     app = current_app._get_current_object()
     initializeBleedValveMotor(app)
+    initializeLed(app)
     socketio.start_background_task(
         start_sensor_simulator,
         socketio,

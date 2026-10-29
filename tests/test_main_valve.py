@@ -51,8 +51,8 @@ class TestMainValve(unittest.TestCase):
         self.app_context.pop()
 
     def test_pin_assignment(self):
-        """Test that mainValvePin is assigned to GPIO 26."""
-        self.assertEqual(piUtils.mainValvePin, 26)
+        """Test that mainValvePin is assigned to GPIO 24."""
+        self.assertEqual(piUtils.mainValvePin, 24)
 
     def test_main_valve_direct_dummy_control(self):
         """Test setting main valve state directly in dummy mode."""
@@ -156,12 +156,12 @@ class TestMainValve(unittest.TestCase):
             # Test opening main valve
             piUtils.setMainValve(True)
             self.assertTrue(piUtils.mainValveOpen)
-            mock_gpio.output.assert_called_with(26, mock_gpio.HIGH)
+            mock_gpio.output.assert_called_with(24, mock_gpio.HIGH)
 
             # Test closing main valve
             piUtils.setMainValve(False)
             self.assertFalse(piUtils.mainValveOpen)
-            mock_gpio.output.assert_called_with(26, mock_gpio.LOW)
+            mock_gpio.output.assert_called_with(24, mock_gpio.LOW)
 
     def test_cleanup_closes_main_valve(self):
         """Test cleanupGpio closes the main valve and sets GPIO 26 LOW on RPi."""

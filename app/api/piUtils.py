@@ -28,7 +28,11 @@ fan1Pin = 1
 #fan3Pin = 20
 #fan4Pin = 21
 mixerPin = 5
+# LED Lighting PWM configuration (MOSFET driver)
 ledPWMPin = 18
+PWM_PIN = ledPWMPin
+LED_PWM_FREQ = 1000          # 1000Hz frequency for flicker-free LED operation
+MAX_LUX = 3000
 
 # Dissolved oxygen control pins
 doSolenoidValve1 = 10         # NEED TO CONFIG FOR 3 PINS
@@ -82,6 +86,83 @@ doBleedValvePercent = 0  # 0-100 %
 bleedValveDriverEnabled = False
 _dosvcounter = 3
 motorInit: bool = False
+
+currentLedLux = 0.0
+currentLedDutyCycle = 0.0
+ledPwm = None
+mosfet = None
+
+# LED Control functions
+
+def setDummyLux(target_lux: float):
+    """
+    Converts a target lux value into a PWM duty cycle (0 to 100)
+    and simulates applying it to the MOSFET (PC mode).
+    """
+    global currentLedLux, currentLedDutyCycle
+    try:
+        target_lux = float(target_lux)
+    except (TypeError, ValueError):
+        target_lux = 0.0
+
+    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    duty_cycle = max(0.0, min(100.0, duty_cycle))
+    currentLedLux = target_lux
+    currentLedDutyCycle = duty_cycle
+    print(f"[DUMMY] Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
+
+setDummyLed = setDummyLux
+setDummyLedIntensity = setDummyLux
+
+
+def setRpiLux(target_lux: float):
+    """
+    Converts a target lux value into a PWM duty cycle (0 to 100)
+    and applies it to the MOSFET using RPi.GPIO.
+    """
+    global currentLedLux, currentLedDutyCycle, ledPwm, mosfet
+    try:
+        target_lux = float(target_lux)
+    except (TypeError, ValueError):
+        target_lux = 0.0
+
+    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    duty_cycle = max(0.0, min(100.0, duty_cycle))
+    currentLedLux = target_lux
+    currentLedDutyCycle = duty_cycle
+
+    if ledPwm is None and isRpiPresent and GPIO is not None:
+        try:
+            GPIO.setup(ledPWMPin, GPIO.OUT)
+            ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+            ledPwm.start(0)
+            mosfet = ledPwm
+        except Exception as e:
+            logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
+
+    if ledPwm is not None:
+        try:
+            ledPwm.ChangeDutyCycle(duty_cycle)
+        except Exception as e:
+            logging.error(f"[RPI] Failed to change LED duty cycle: {e}")
+    print(f"[RPI] Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
+
+setRpiLed = setRpiLux
+setRpiLedIntensity = setRpiLux
+
+
+def set_lux(target_lux: float):
+    """
+    Converts target lux into duty cycle and applies it to LED PWM on PIN 18.
+    Dispatches to setRpiLux if RPi is present, else setDummyLux.
+    """
+    if isRpiPresent:
+        return setRpiLux(target_lux)
+    else:
+        return setDummyLux(target_lux)
+
+setLedIntensity = set_lux
+ledIntensity = set_lux
 
 # DUMMY implementations (PC)
 
@@ -265,6 +346,36 @@ def disableBleedValveMotor():
         print("[DUMMY] Bleed valve motor driver DISABLED")
 
 
+def initializeLed(app=None):
+    """
+    Initialize LED on startup. Reads stored led_intensity from DB
+    and applies it using set_lux.
+    """
+    def _do_init():
+        try:
+            from app.models import get_control_settings
+            settings = get_control_settings()
+            target_lux = settings.get("led_intensity", 1000.0)
+            set_lux(target_lux)
+            prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
+            print(f"{prefix} LED restored to {target_lux} lux")
+        except Exception as e:
+            logging.warning(f"Failed to initialize LED setting from DB: {e}")
+
+    if app is not None:
+        with app.app_context():
+            _do_init()
+    else:
+        try:
+            from flask import current_app
+            if current_app:
+                _do_init()
+            else:
+                _do_init()
+        except Exception:
+            _do_init()
+
+
 def initializeBleedValveMotor(app=None):
     """
     Initialize bleed valve stepper motor on startup. Reads stored motor position from DB
@@ -401,6 +512,15 @@ if isRpiPresent:
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(ledPWMPin, GPIO.OUT)
+    try:
+        ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+        ledPwm.start(0)  # Start at 0% brightness
+        mosfet = ledPwm
+    except Exception as e:
+        ledPwm = None
+        mosfet = None
+        logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
 
     # Stepper motor (Wantai 42bygh610-1) setup for bleed valve
     GPIO.setup(bleedValveDirPin, GPIO.OUT)
@@ -505,6 +625,8 @@ if isRpiPresent:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
             GPIO.output(doSolenoidValve3, GPIO.LOW)
+
+
 
     # override with RPi implementations
     sourceValveState = setSourceValveState
@@ -735,6 +857,16 @@ def cleanupGpio():
             GPIO.output(mixerPin, GPIO.LOW)
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting heater/mixer: {e}")
+        try:
+            if ledPwm is not None:
+                print("[RPI] Stopping LED PWM...")
+                try:
+                    ledPwm.ChangeDutyCycle(0)
+                except Exception:
+                    pass
+                ledPwm.stop()
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while stopping LED PWM: {e}")
         try:
             print("[RPI] Disabling bleed valve motor driver (pin HIGH)...")
             GPIO.output(bleedValveEnablePin, GPIO.HIGH)
