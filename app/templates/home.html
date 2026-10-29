@@ -17,21 +17,17 @@
       </button>
       <button class="screen-nav-pill" data-screen-target="2" type="button">
         <span class="nav-pill-dot"></span>
-        <span class="nav-pill-text">Thresholds</span>
-      </button>
-      <button class="screen-nav-pill" data-screen-target="3" type="button">
-        <span class="nav-pill-dot"></span>
         <span class="nav-pill-text">Trends</span>
       </button>
     </div>
     <div class="screen-nav-controls">
       <button class="screen-nav-arrow" id="home-prev-btn" type="button" aria-label="Previous screen" title="Previous screen">&#9664;</button>
-      <span class="screen-counter" id="home-screen-counter">1 / 4</span>
+      <span class="screen-counter" id="home-screen-counter">1 / 3</span>
       <button class="screen-nav-arrow" id="home-next-btn" type="button" aria-label="Next screen" title="Next screen">&#9654;</button>
     </div>
   </nav>
 
-  <!-- Swipeable Viewport with 4 Individual Full Screens -->
+  <!-- Swipeable Viewport with 3 Individual Full Screens -->
   <div class="swipe-viewport" id="home-viewport">
     
     <!-- Screen 1: Live Sensor Readings -->
@@ -39,7 +35,6 @@
       <div class="glass-panel slide-card live-card">
         <div class="slide-header">
           <h1 id="live-readings-title">Live Sensor Readings</h1>
-          <span class="screen-badge">Real-time Telemetry</span>
         </div>
 
         <div class="gauge-grid">
@@ -90,12 +85,11 @@
       </div>
     </section>
 
-    <!-- Screen 2: System Controls (Moved Water Source Pipe here; Control Valves & Drainage removed) -->
+    <!-- Screen 2: System Controls (Includes Water Source Pipe & Threshold Settings for pH/Salinity) -->
     <section class="screen-slide" id="screen-controls" aria-labelledby="controls-title">
       <div class="glass-panel slide-card controls-card">
         <div class="slide-header">
           <h2 id="controls-title">System Controls</h2>
-          <span class="screen-badge">Actuator Setpoints & Flow</span>
         </div>
 
         <div class="controls-layout">
@@ -126,12 +120,12 @@
             </label>
           </div>
 
-          <!-- Water Source Pipe Valve (Moved into System Controls) -->
+          <!-- Right Column: Water Source Pipe & Thresholds below it -->
           <div class="controls-valve-panel">
+            <!-- Water Source Pipe (No description) -->
             <div class="water-source-box">
               <div class="water-source-header">
                 <h3>Water Source Pipe</h3>
-                <p>Main inflow water line actuator control</p>
               </div>
               <div class="water-source-action">
                 <button class="valve-toggle valve-toggle-large" data-valve="source" aria-pressed="true" type="button">
@@ -139,39 +133,34 @@
                 </button>
               </div>
             </div>
+
+            <!-- Threshold Settings for pH Level and Salinity (Placed below Water Source Pipe) -->
+            <div class="threshold-box">
+              <h3>Threshold Settings</h3>
+              <div class="threshold-table-wrap">
+                <table class="threshold-table threshold-table-compact">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Min</th>
+                      <th>Max</th>
+                      <th>Unit</th>
+                    </tr>
+                  </thead>
+                  <tbody id="threshold-table-body">
+                    <tr>
+                      <td colspan="4">Loading thresholds...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Screen 3: Thresholds -->
-    <section class="screen-slide" id="screen-thresholds" aria-labelledby="thresholds-title">
-      <div class="glass-panel slide-card thresholds-card">
-        <div class="slide-header">
-          <h2 id="thresholds-title">Thresholds</h2>
-          <span class="screen-badge">Operational Limits & Alert Ranges</span>
-        </div>
-        <div class="table-scroll">
-          <table class="threshold-table">
-            <thead>
-              <tr>
-                <th>Parameter</th>
-                <th>Min</th>
-                <th>Max</th>
-                <th>Unit</th>
-              </tr>
-            </thead>
-            <tbody id="threshold-table-body">
-              <tr>
-                <td colspan="4">Loading thresholds...</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- Screen 4: Trends -->
+    <!-- Screen 3: Trends -->
     <section class="screen-slide" id="screen-trends" aria-labelledby="trends-title">
       <div class="glass-panel slide-card trends-card">
         <div class="slide-header">
@@ -179,7 +168,6 @@
             <h2 id="trends-title">Trends</h2>
             <p id="trend-date-label" class="trend-date-label">Loading...</p>
           </div>
-          <span class="screen-badge">Historical Drift</span>
         </div>
         <div class="trend-list" aria-live="polite">
           <div class="trend-row" data-trend-metric="temperature"></div>
