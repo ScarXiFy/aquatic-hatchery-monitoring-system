@@ -11,7 +11,7 @@ MIXER_SHUTDOWN_DELAY = 20.0       # Run-on time in seconds for mixer after cooli
 
 # TEMPORARY PIN PLACEMENTS
 sourceValvePin = 6
-drainValvePin = 5
+#drainValvePin = 5
 
 # Temperature control pins
 #coolingSystemPin = 5
@@ -384,7 +384,7 @@ if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
     GPIO.setup(sourceValvePin, GPIO.OUT)
-    GPIO.setup(drainValvePin, GPIO.OUT)
+    #GPIO.setup(drainValvePin, GPIO.OUT)
     GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(pel1Pin, GPIO.OUT)
     GPIO.setup(pel2Pin, GPIO.OUT)
@@ -419,7 +419,7 @@ if isRpiPresent:
         global drainValveOpen
         drainValveOpen = isValveOpen
         print(f"[RPI] drain valve -> {drainValveOpen}")
-        GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
+        #GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
 
     setMainValve = setRpiMainValve
     setMixer = setRpiMixer
