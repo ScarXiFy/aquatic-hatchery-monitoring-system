@@ -15,29 +15,30 @@ drainValvePin = 5
 
 # Temperature control pins
 #coolingSystemPin = 5
-coolingValvePin = 24
-heatingSystemPin = 19
+coolingValvePin = 25
+heatingSystemPin = 26
 heatingValvePin = 23
-mainValvePin = 26
-pel1Pin = 25
-pel2Pin = 8
-pel3Pin = 7
-pel4Pin = 1
-fan1Pin = 12
-fan2Pin = 16
-fan3Pin = 20
-fan4Pin = 21
-mixerPin = 9
+mainValvePin = 24
+pel1Pin = 12
+pel2Pin = 16
+pel3Pin = 20
+pel4Pin = 21
+fan1Pin = 1
+#fan2Pin = 16
+#fan3Pin = 20
+#fan4Pin = 21
+mixerPin = 5
+ledPWMPin = 18
 
 # Dissolved oxygen control pins
-doSolenoidValve1 = 17         # NEED TO CONFIG FOR 3 PINS
-doSolenoidValve2 = 27
-doSolenoidValve3 = 22
+doSolenoidValve1 = 10         # NEED TO CONFIG FOR 3 PINS
+doSolenoidValve2 = 9
+doSolenoidValve3 = 11
 
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
-bleedValveDirPin = 14
-bleedValveStepPin = 15
-bleedValveEnablePin = 10
+bleedValveDirPin = 17
+bleedValveStepPin = 27
+bleedValveEnablePin = 22
 
 # Stepper motor configuration parameters
 STEP_DELAY = 0.001          # 1 ms pulse spacing
@@ -390,9 +391,9 @@ if isRpiPresent:
     GPIO.setup(pel3Pin, GPIO.OUT)
     GPIO.setup(pel4Pin, GPIO.OUT)
     GPIO.setup(fan1Pin, GPIO.OUT)
-    GPIO.setup(fan2Pin, GPIO.OUT)
-    GPIO.setup(fan3Pin, GPIO.OUT)
-    GPIO.setup(fan4Pin, GPIO.OUT)
+    #GPIO.setup(fan2Pin, GPIO.OUT)
+    #GPIO.setup(fan3Pin, GPIO.OUT)
+    #GPIO.setup(fan4Pin, GPIO.OUT)
     GPIO.setup(coolingValvePin, GPIO.OUT)
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(heatingValvePin, GPIO.OUT)
@@ -433,9 +434,9 @@ if isRpiPresent:
         GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
         GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
         GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
         _update_mixer_state()
         _update_main_valve_state()
 
