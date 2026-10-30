@@ -370,4 +370,65 @@ def clear_all_notifications():
     db = get_db()
     db.execute("DELETE FROM notifications")
     db.commit()
-    return [], 0
+    return [], 0
+
+
+# ---------------------------------------------------------------------------
+# Motor state tracking
+# ---------------------------------------------------------------------------
+
+def save_motor_state(metric: str, position: int):
+    """
+    Save or update the motor position (0-3) for a given metric.
+    """
+    db = get_db()
+    last_updated = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    db.execute(
+        """
+        INSERT INTO motor_state (metric, position, last_updated)
+        VALUES (?, ?, ?)
+        ON CONFLICT(metric) DO UPDATE SET
+            position = excluded.position,
+            last_updated = excluded.last_updated
+        """,
+        (metric, int(position), last_updated),
+    )
+    db.commit()
+
+
+def load_motor_state(metric: str):
+    """
+    Load the saved motor position (0-3) for a given metric.
+    Returns integer position (0-3) or None if not found/error.
+    """
+    try:
+        db = get_db()
+        row = db.execute(
+            "SELECT position FROM motor_state WHERE metric = ?",
+            (metric,),
+        ).fetchone()
+        return int(row["position"]) if row is not None else None
+    except Exception:
+        return None
+
+
+def init_motor_state():
+    """
+    Ensure the motor_state table exists and initialize default position for bleed_valve if missing.
+    """
+    db = get_db()
+    db.execute(
+        """
+        CREATE TABLE IF NOT EXISTS motor_state (
+            metric TEXT PRIMARY KEY,
+            position INTEGER NOT NULL,
+            last_updated TEXT NOT NULL
+        )
+        """
+    )
+    db.commit()
+    
+    pos = load_motor_state("bleed_valve")
+    if pos is None:
+        save_motor_state("bleed_valve", 0)
+

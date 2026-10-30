@@ -28,6 +28,7 @@ def init_db(app):
             db.executescript(schema_file.read())
         db.commit()
 
-        from app.models import cleanup_old_notifications
+        from app.models import cleanup_old_notifications, init_motor_state
         cleanup_old_notifications()
+        init_motor_state()
 

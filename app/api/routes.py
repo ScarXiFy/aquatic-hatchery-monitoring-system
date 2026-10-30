@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request, current_app
-from app.api.piUtils import sourceValveState, drainValveState
+from app.api.piUtils import sourceValveState, drainValveState, mainValve, set_lux, setLedIntensity
+import app.api.piUtils as piUtils
 
 from app.models import (
     get_history,
@@ -21,6 +22,7 @@ CONTROL_STATE = {
     "valves": {
         "source": True,
         "drain": False,
+        "main": False,
     },
     "sliders": {
         "temperature_setpoint": 26,
@@ -113,8 +115,11 @@ def set_valve(name):
         sourceValveState(is_open)
     elif name == "drain":
         drainValveState(is_open)
+    elif name == "main":
+        mainValve(is_open)
     else:
         return ("Unknown valve", 400)
+    CONTROL_STATE["valves"][name] = is_open
     return ("", 204)
 
 
@@ -150,6 +155,8 @@ def set_sliders():
             
     if updates:
         db_sliders = update_control_settings(updates)
+        if "led_intensity" in updates:
+            piUtils.set_lux(updates["led_intensity"])
     else:
         db_sliders = get_control_settings()
         
@@ -157,6 +164,22 @@ def set_sliders():
         CONTROL_STATE["sliders"][key] = val
         
     return jsonify({"sliders": db_sliders})
+
+
+@api_bp.post("/controls/led")
+def set_led():
+    payload = request.get_json(silent=True) or {}
+    if "lux" in payload:
+        target_lux = float(payload["lux"])
+    elif "led_intensity" in payload:
+        target_lux = float(payload["led_intensity"])
+    else:
+        return jsonify({"error": "missing lux or led_intensity in payload"}), 400
+
+    piUtils.set_lux(target_lux)
+    update_control_settings({"led_intensity": target_lux})
+    CONTROL_STATE["sliders"]["led_intensity"] = target_lux
+    return jsonify({"led_intensity": target_lux, "lux": target_lux}), 200
 
 
 @api_bp.get("/notifications")

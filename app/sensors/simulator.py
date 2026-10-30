@@ -44,13 +44,13 @@ def generate_sensor_reading():
     
     # Dissolved Oxygen: use ADS1115 AIN2 if available on RPi; fall back to simulation otherwise
     sensor_do = None
-    if isRpiPresent:
-        try:
-            from app.services.do_sensor import DOSensorService
-            do_sensor = DOSensorService()
-            sensor_do = do_sensor.read_do()
-        except Exception:
-            pass
+    #if isRpiPresent:
+    #    try:
+    #        from app.services.do_sensor import DOSensorService
+    #        do_sensor = DOSensorService()
+    #        sensor_do = do_sensor.read_do()
+    #    except Exception:
+    #        pass
 
     if sensor_do is not None:
         current_do = sensor_do
@@ -70,26 +70,26 @@ def generate_sensor_reading():
     
     # Salinity: use ADS1115 AIN1 if available on RPi; fall back to simulation otherwise
     salinity = None
-    if isRpiPresent:
-        try:
-            from app.services.salinity_sensor import SalinitySensorService
-            salinity_sensor = SalinitySensorService()
-            salinity = salinity_sensor.read_salinity()
-        except Exception:
-            pass
+    # if isRpiPresent:
+    #     try:
+    #         from app.services.salinity_sensor import SalinitySensorService
+    #         salinity_sensor = SalinitySensorService()
+    #         salinity = salinity_sensor.read_salinity()
+    #     except Exception:
+    #         pass
 
     if salinity is None:
         print(f"[DUMMY] Salinity sensor failed to initialize - using simulated salinity readings")
         salinity = round(random.uniform(29.0, 34.0), 2)
     
     ph = None
-    if isRpiPresent:
-        try:
-            from app.services.ph_sensor import PHSensorService
-            ph_sensor = PHSensorService()
-            ph = ph_sensor.read_ph()
-        except Exception:
-            pass
+    # if isRpiPresent:
+    #     try:
+    #         from app.services.ph_sensor import PHSensorService
+    #         ph_sensor = PHSensorService()
+    #         ph = ph_sensor.read_ph()
+    #     except Exception:
+    #         pass
             
     if ph is None:
         print(f"[DUMMY] pH sensor failed to initialize - using simulated pH readings")

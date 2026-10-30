@@ -20,7 +20,7 @@
     },
     dissolved_oxygen: {
       label: "Dissolved Oxygen",
-      shortLabel: "DO",
+      shortLabel: "Dissolved Oxygen",
       unit: "mg/L",
       color: "#10b981",
       min: 0,
@@ -691,8 +691,144 @@
     });
   }
 
+  function initializeGraphSlider() {
+    const viewport = document.getElementById("graph-viewport");
+    if (!viewport) return;
+
+    const slides = viewport.querySelectorAll(".chart-slide");
+    const pills = document.querySelectorAll("#graph-screen-nav .graph-nav-pill");
+    const prevBtn = document.getElementById("graph-prev-btn");
+    const nextBtn = document.getElementById("graph-next-btn");
+    const counter = document.getElementById("graph-screen-counter");
+
+    let currentIdx = 0;
+    const totalSlides = slides.length;
+
+    function resizeActiveChart(idx) {
+      const slide = slides[idx];
+      if (!slide) return;
+      const canvas = slide.querySelector("canvas");
+      if (canvas && charts[canvas.id]) {
+        charts[canvas.id].resize();
+      }
+    }
+
+    function updateNav(idx) {
+      currentIdx = idx;
+      pills.forEach((pill, i) => {
+        if (i === idx) {
+          pill.classList.add("active");
+          pill.setAttribute("aria-current", "true");
+        } else {
+          pill.classList.remove("active");
+          pill.removeAttribute("aria-current");
+        }
+      });
+
+      if (counter) {
+        counter.textContent = `${idx + 1} / ${totalSlides}`;
+      }
+
+      if (prevBtn) {
+        prevBtn.style.opacity = idx === 0 ? "0.35" : "1";
+        prevBtn.style.pointerEvents = idx === 0 ? "none" : "auto";
+      }
+      if (nextBtn) {
+        nextBtn.style.opacity = idx === totalSlides - 1 ? "0.35" : "1";
+        nextBtn.style.pointerEvents = idx === totalSlides - 1 ? "none" : "auto";
+      }
+
+      resizeActiveChart(idx);
+    }
+
+    function scrollToSlide(idx, smooth = true) {
+      if (idx < 0) idx = 0;
+      if (idx >= totalSlides) idx = totalSlides - 1;
+      currentIdx = idx;
+      const targetSlide = slides[idx];
+      if (targetSlide) {
+        viewport.scrollTo({
+          left: targetSlide.offsetLeft,
+          behavior: smooth ? "smooth" : "auto"
+        });
+      }
+      updateNav(idx);
+    }
+
+    pills.forEach((pill, i) => {
+      pill.addEventListener("click", () => scrollToSlide(i, true));
+    });
+
+    if (prevBtn) {
+      prevBtn.addEventListener("click", () => scrollToSlide(currentIdx - 1, true));
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener("click", () => scrollToSlide(currentIdx + 1, true));
+    }
+
+    let scrollRaf = null;
+    viewport.addEventListener("scroll", () => {
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = requestAnimationFrame(() => {
+        const width = viewport.clientWidth;
+        if (width > 0) {
+          const newIdx = Math.round(viewport.scrollLeft / width);
+          if (newIdx !== currentIdx && newIdx >= 0 && newIdx < totalSlides) {
+            updateNav(newIdx);
+          }
+        }
+      });
+    }, { passive: true });
+
+    // Touch swipe gesture handling
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isSwiping = false;
+
+    viewport.addEventListener("touchstart", (e) => {
+      if (e.target.closest("button")) {
+        isSwiping = false;
+        return;
+      }
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      isSwiping = true;
+    }, { passive: true });
+
+    viewport.addEventListener("touchend", (e) => {
+      if (!isSwiping) return;
+      isSwiping = false;
+      const touchEndX = e.changedTouches[0].clientX;
+      const touchEndY = e.changedTouches[0].clientY;
+      const diffX = touchEndX - touchStartX;
+      const diffY = touchEndY - touchStartY;
+
+      if (Math.abs(diffX) > 40 && Math.abs(diffX) > Math.abs(diffY) * 1.3) {
+        if (diffX < 0) {
+          // Swipe left -> next graph slide to the right
+          scrollToSlide(currentIdx + 1, true);
+        } else {
+          // Swipe right -> prev graph slide to the left
+          scrollToSlide(currentIdx - 1, true);
+        }
+      }
+    }, { passive: true });
+
+    // Initial resize after charts created
+    setTimeout(() => {
+      resizeActiveChart(0);
+    }, 150);
+
+    window.addEventListener("resize", () => {
+      resizeActiveChart(currentIdx);
+    });
+
+    updateNav(0);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     initializeCharts();
+    initializeGraphSlider();
     bindRangeButtons();
     setInterval(updateElapsedTimes, 1000);
   });

@@ -32,3 +32,9 @@ ON sensor_readings (timestamp);
 CREATE INDEX IF NOT EXISTS idx_notifications_created_at
 ON notifications (created_at);
 
+CREATE TABLE IF NOT EXISTS motor_state (
+    metric TEXT PRIMARY KEY,
+    position INTEGER NOT NULL,
+    last_updated TEXT NOT NULL
+);
+

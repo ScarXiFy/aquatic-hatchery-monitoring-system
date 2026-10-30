@@ -1,38 +1,168 @@
+import atexit
 import random
+import time
+import logging
+import threading
+
+# Timing configuration for heating and mixing control
+HEATER_PULSE_DURATION = 1.0       # Duration in seconds the heater stays ON per pulse
+HEATER_CHECK_INTERVAL = 30.0      # Wait time in seconds between heating checks/pulses
+MIXER_SHUTDOWN_DELAY = 10.0       # Run-on time in seconds for mixer after cooling/heating stops
+
 # TEMPORARY PIN PLACEMENTS
-sourceValvePin = 18
-drainValvePin = 17
+sourceValvePin = 6
+#drainValvePin = 5
 
 # Temperature control pins
-coolingSystemPin = 5
-coolingValvePin = 21
-heatingSystemPin = 22
+#coolingSystemPin = 5
+coolingValvePin = 25
+heatingSystemPin = 26
 heatingValvePin = 23
+mainValvePin = 24
+pel1Pin = 12
+pel2Pin = 16
+pel3Pin = 20
+pel4Pin = 21
+fan1Pin = 1
+#fan2Pin = 16
+#fan3Pin = 20
+#fan4Pin = 21
+mixerPin = 5
+# LED Lighting PWM configuration (MOSFET driver)
+ledPWMPin = 18
+PWM_PIN = ledPWMPin
+LED_PWM_FREQ = 1000          # 1000Hz frequency for flicker-free LED operation
+MAX_LUX = 3000
 
 # Dissolved oxygen control pins
-doSolenoidValve1 = 12         # NEED TO CONFIG FOR 3 PINS
-doSolenoidValve2 = 16
-doSolenoidValve3 = 20
-doBleedValveStepperPin = 25     # stepper motor (PWM duty cycle maps to open %)
+doSolenoidValve1 = 10         # NEED TO CONFIG FOR 3 PINS
+doSolenoidValve2 = 9
+doSolenoidValve3 = 11
+
+# Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
+bleedValveDirPin = 17
+bleedValveStepPin = 27
+bleedValveEnablePin = 22
+
+# Stepper motor configuration parameters
+STEP_DELAY = 0.001          # 1 ms pulse spacing
+STEPS_PER_POSITION = 200     # ~33 degree rotation per position (0%, 33%, 66%, 100%)
+BLEED_VALVE_POSITIONS = [0.0, 33.0, 66.0, 100.0]
 
 isRpiPresent: bool = True
 try:
     import RPi.GPIO as GPIO
 except:
     isRpiPresent = False
+    GPIO = None
     print("RPi module not present...")
+
+CW = GPIO.HIGH if isRpiPresent else 1
+CCW = GPIO.LOW if isRpiPresent else 0
+MOTOR_ENABLE = GPIO.LOW if isRpiPresent else 0
+MOTOR_DISABLE = GPIO.HIGH if isRpiPresent else 1
 
 sourceValveOpen = False
 drainValveOpen = False
+mainValveOpen = False
 
 coolingSystemActive = False
 coolingValveOpen = False
 heatingSystemActive = False
 heatingValveOpen = False
+heaterActive = False
+mixerActive = False
+
+# Synchronization for mixer and heater
+_mixer_timer = None
+_mixer_lock = threading.Lock()
+
+_heating_thread = None
+_heating_stop_event = threading.Event()
+_heating_lock = threading.Lock()
 
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
+bleedValveDriverEnabled = False
 _dosvcounter = 3
+motorInit: bool = False
+
+currentLedLux = 0.0
+currentLedDutyCycle = 0.0
+ledPwm = None
+mosfet = None
+
+# LED Control functions
+
+def setDummyLux(target_lux: float):
+    """
+    Converts a target lux value into a PWM duty cycle (0 to 100)
+    and simulates applying it to the MOSFET (PC mode).
+    """
+    global currentLedLux, currentLedDutyCycle
+    try:
+        target_lux = float(target_lux)
+    except (TypeError, ValueError):
+        target_lux = 0.0
+
+    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    duty_cycle = max(0.0, min(100.0, duty_cycle))
+    currentLedLux = target_lux
+    currentLedDutyCycle = duty_cycle
+    print(f"[DUMMY] Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
+
+setDummyLed = setDummyLux
+setDummyLedIntensity = setDummyLux
+
+
+def setRpiLux(target_lux: float):
+    """
+    Converts a target lux value into a PWM duty cycle (0 to 100)
+    and applies it to the MOSFET using RPi.GPIO.
+    """
+    global currentLedLux, currentLedDutyCycle, ledPwm, mosfet
+    try:
+        target_lux = float(target_lux)
+    except (TypeError, ValueError):
+        target_lux = 0.0
+
+    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    duty_cycle = max(0.0, min(100.0, duty_cycle))
+    currentLedLux = target_lux
+    currentLedDutyCycle = duty_cycle
+
+    if ledPwm is None and isRpiPresent and GPIO is not None:
+        try:
+            GPIO.setup(ledPWMPin, GPIO.OUT)
+            ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+            ledPwm.start(0)
+            mosfet = ledPwm
+        except Exception as e:
+            logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
+
+    if ledPwm is not None:
+        try:
+            ledPwm.ChangeDutyCycle(duty_cycle)
+        except Exception as e:
+            logging.error(f"[RPI] Failed to change LED duty cycle: {e}")
+    print(f"[RPI] Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
+
+setRpiLed = setRpiLux
+setRpiLedIntensity = setRpiLux
+
+
+def set_lux(target_lux: float):
+    """
+    Converts target lux into duty cycle and applies it to LED PWM on PIN 18.
+    Dispatches to setRpiLux if RPi is present, else setDummyLux.
+    """
+    if isRpiPresent:
+        return setRpiLux(target_lux)
+    else:
+        return setDummyLux(target_lux)
+
+setLedIntensity = set_lux
+ledIntensity = set_lux
 
 # DUMMY implementations (PC)
 
@@ -46,11 +176,102 @@ def setDummyDrainValveState(isValveOpen: bool):
     drainValveOpen = isValveOpen
     print(f"[DUMMY] drain valve -> {drainValveOpen}")
 
+def setDummyMainValve(isOpen: bool):
+    global mainValveOpen
+    mainValveOpen = isOpen
+    print(f"[DUMMY] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
+
+# Default main valve pointer (PC mode)
+mainValve = setDummyMainValve
+mainValveState = setDummyMainValve
+
+def _update_main_valve_state():
+    temp_system_active = coolingSystemActive or heatingSystemActive
+    if temp_system_active:
+        if not mainValveOpen:
+            mainValve(True)
+    else:
+        if mainValveOpen:
+            mainValve(False)
+
+def setDummyMixer(active: bool):
+    global mixerActive
+    mixerActive = active
+    print(f"[DUMMY] mixer motor -> {'ON' if active else 'OFF'}")
+
+def _setDummyHeaterRelay(active: bool):
+    global heaterActive
+    heaterActive = active
+    print(f"[DUMMY] heater relay -> {'ON' if active else 'OFF'}")
+
+_set_heater_relay = _setDummyHeaterRelay
+
+def _update_mixer_state():
+    global _mixer_timer
+    with _mixer_lock:
+        temp_system_active = coolingSystemActive or heatingSystemActive
+        if temp_system_active:
+            if _mixer_timer is not None:
+                _mixer_timer.cancel()
+                _mixer_timer = None
+            if not mixerActive:
+                mixer(True)
+        else:
+            if mixerActive and _mixer_timer is None:
+                def _delayed_mixer_off():
+                    global _mixer_timer
+                    with _mixer_lock:
+                        _mixer_timer = None
+                        if not coolingSystemActive and not heatingSystemActive:
+                            mixer(False)
+                _mixer_timer = threading.Timer(MIXER_SHUTDOWN_DELAY, _delayed_mixer_off)
+                _mixer_timer.daemon = True
+                _mixer_timer.start()
+                print(f"[CONTROL] Cooling/heating disabled - mixer will turn OFF in {MIXER_SHUTDOWN_DELAY}s")
+
+def _heating_worker():
+    while not _heating_stop_event.is_set() and heatingSystemActive:
+        _set_heater_relay(True)
+        if _heating_stop_event.wait(HEATER_PULSE_DURATION):
+            _set_heater_relay(False)
+            break
+        _set_heater_relay(False)
+
+        if _heating_stop_event.wait(HEATER_CHECK_INTERVAL):
+            break
+
+def setRpiMixer(active: bool):
+    global mixerActive
+    mixerActive = active
+    print(f"[RPI] mixer motor -> {'ON' if active else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(mixerPin, GPIO.LOW if active else GPIO.HIGH)
+
+setMixer = setRpiMixer
+
+def _setRpiHeaterRelay(active: bool):
+    global heaterActive
+    heaterActive = active
+    print(f"[RPI] heater relay -> {'ON' if active else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+
+def setRpiMainValve(isOpen: bool):
+    global mainValveOpen
+    mainValveOpen = isOpen
+    print(f"[RPI] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(mainValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+
+setMainValve = setRpiMainValve
+
 # Temperature
 def setDummyCoolingSystem(active: bool):
     global coolingSystemActive
     coolingSystemActive = active
     print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
+    _update_mixer_state()
+    _update_main_valve_state()
 
 def setDummyCoolingValve(isOpen: bool):
     global coolingValveOpen
@@ -58,9 +279,23 @@ def setDummyCoolingValve(isOpen: bool):
     print(f"[DUMMY] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
 
 def setDummyHeatingSystem(active: bool):
-    global heatingSystemActive
-    heatingSystemActive = active
-    print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
+    global heatingSystemActive, _heating_thread
+    with _heating_lock:
+        heatingSystemActive = active
+        print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
+        if active:
+            _update_mixer_state()
+            _update_main_valve_state()
+            if _heating_thread is None or not _heating_thread.is_alive():
+                _heating_stop_event.clear()
+                _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
+                _heating_thread.start()
+        else:
+            _heating_stop_event.set()
+            _set_heater_relay(False)
+            _heating_thread = None
+            _update_mixer_state()
+            _update_main_valve_state()
 
 def setDummyHeatingValve(isOpen: bool):
     global heatingValveOpen
@@ -83,14 +318,174 @@ def setDummyDoBleedValve(percent: float):
     print(f"[DUMMY] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
 
 
+def enableBleedValveMotor():
+    """Enable the stepper motor driver (LOW = enabled)."""
+    global bleedValveDriverEnabled
+    bleedValveDriverEnabled = True
+    if isRpiPresent and GPIO is not None:
+        try:
+            GPIO.output(bleedValveEnablePin, GPIO.LOW)
+            print("[RPI] Bleed valve motor driver ENABLED (pin LOW)")
+        except Exception as e:
+            logging.error(f"[RPI] Failed to enable bleed valve motor driver: {e}")
+    else:
+        print("[DUMMY] Bleed valve motor driver ENABLED")
+
+
+def disableBleedValveMotor():
+    """Disable the stepper motor driver (HIGH = disabled)."""
+    global bleedValveDriverEnabled
+    bleedValveDriverEnabled = False
+    if isRpiPresent and GPIO is not None:
+        try:
+            GPIO.output(bleedValveEnablePin, GPIO.HIGH)
+            print("[RPI] Bleed valve motor driver DISABLED (pin HIGH)")
+        except Exception as e:
+            logging.error(f"[RPI] Failed to disable bleed valve motor driver: {e}")
+    else:
+        print("[DUMMY] Bleed valve motor driver DISABLED")
+
+
+def initializeLed(app=None):
+    """
+    Initialize LED on startup. Reads stored led_intensity from DB
+    and applies it using set_lux.
+    """
+    def _do_init():
+        try:
+            from app.models import get_control_settings
+            settings = get_control_settings()
+            target_lux = settings.get("led_intensity", 1000.0)
+            set_lux(target_lux)
+            prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
+            print(f"{prefix} LED restored to {target_lux} lux")
+        except Exception as e:
+            logging.warning(f"Failed to initialize LED setting from DB: {e}")
+
+    if app is not None:
+        with app.app_context():
+            _do_init()
+    else:
+        try:
+            from flask import current_app
+            if current_app:
+                _do_init()
+            else:
+                _do_init()
+        except Exception:
+            _do_init()
+
+
+def initializeBleedValveMotor(app=None):
+    """
+    Initialize bleed valve stepper motor on startup. Reads stored motor position from DB
+    and restores that as the current valve position without adjusting physical motor movement.
+    Sets motorInit = True.
+    """
+    global motorInit, doBleedValvePercent
+
+    def _do_init():
+        global motorInit, doBleedValvePercent
+        from app.models import load_motor_state
+
+        enableBleedValveMotor()
+
+        saved_pos = load_motor_state("bleed_valve")
+        if saved_pos is None or not isinstance(saved_pos, int):
+            saved_pos = 0
+
+        saved_pos = max(0, min(len(BLEED_VALVE_POSITIONS) - 1, saved_pos))
+        doBleedValvePercent = BLEED_VALVE_POSITIONS[saved_pos]
+
+        motorInit = True
+        prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
+        print(f"{prefix} Bleed valve motor restored to position {saved_pos} ({doBleedValvePercent:.1f}%) without physical movement")
+
+    if app is not None:
+        with app.app_context():
+            _do_init()
+    else:
+        try:
+            from flask import current_app
+            if current_app:
+                _do_init()
+            else:
+                _do_init()
+        except Exception:
+            _do_init()
+
+
+def setDoBleedValveMotor(target_percent: float):
+    """
+    Control Wantai 42bygh610-1 stepper motor for the bleed valve across 4 discrete positions:
+    0%, 33%, 66%, and 100%.
+    """
+    global doBleedValvePercent
+
+    if not motorInit:
+        logging.critical("[RPI] Bleed valve motor not initialized! Movement skipped.")
+        print("[RPI] CRITICAL: Bleed valve motor not initialized! Movement skipped.")
+        return
+
+    positions = BLEED_VALVE_POSITIONS
+    target_percent_clamped = max(0.0, min(100.0, target_percent))
+    target_level = min(range(len(positions)), key=lambda i: abs(positions[i] - target_percent_clamped))
+
+    if not isRpiPresent:
+        setDummyDoBleedValve(target_percent)
+        try:
+            from app.models import save_motor_state
+            save_motor_state("bleed_valve", target_level)
+        except Exception:
+            pass
+        return
+
+    current_level = min(range(len(positions)), key=lambda i: abs(positions[i] - doBleedValvePercent))
+
+    if current_level == target_level:
+        print(f"[RPI] Bleed valve already at target position ({positions[target_level]:.1f}%)")
+        return
+
+    level_diff = target_level - current_level
+    direction = CCW if level_diff > 0 else CW
+    num_positions = abs(level_diff)
+    total_steps = num_positions * STEPS_PER_POSITION
+
+    print(f"[RPI] Bleed valve moving to {target_percent}%")
+
+    try:
+        GPIO.output(bleedValveEnablePin, GPIO.LOW)
+        GPIO.output(bleedValveDirPin, direction)
+        for _ in range(total_steps):
+            GPIO.output(bleedValveStepPin, GPIO.HIGH)
+            time.sleep(STEP_DELAY)
+            GPIO.output(bleedValveStepPin, GPIO.LOW)
+            time.sleep(STEP_DELAY)
+
+        doBleedValvePercent = positions[target_level]
+        try:
+            from app.models import save_motor_state
+            save_motor_state("bleed_valve", target_level)
+        except Exception as e:
+            logging.warning(f"Failed to persist motor state: {e}")
+        print(f"[RPI] Bleed valve reached {doBleedValvePercent:.1f}%")
+    except Exception as e:
+        logging.error(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
+        print(f"[RPI] GPIO failure during bleed valve motor movement: {e}")
+
+
+
 # default assignments (PC mode)
 sourceValveState = setDummySourceValveState
 drainValveState = setDummyDrainValveState
+mainValve = setDummyMainValve
+mainValveState = setDummyMainValve
 
 coolingSystem = setDummyCoolingSystem
 coolingValve = setDummyCoolingValve
 heatingSystem = setDummyHeatingSystem
 heatingValve = setDummyHeatingValve
+mixer = setDummyMixer
 
 doSolenoidValve = setDummyDoSolenoidValve
 doBleedValve = setDummyDoBleedValve
@@ -98,20 +493,41 @@ doBleedValve = setDummyDoBleedValve
 # RPi implementations (GPIO mode)
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
-    GPIO.setup(sourceValvePin, GPIO.OUT)
-    GPIO.setup(drainValvePin, GPIO.OUT)
-    GPIO.setup(coolingSystemPin, GPIO.OUT)
-    GPIO.setup(coolingValvePin, GPIO.OUT)
-    GPIO.setup(heatingSystemPin, GPIO.OUT)
-    GPIO.setup(heatingValvePin, GPIO.OUT)
+    GPIO.setwarnings(False)
+    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.LOW)
+    #GPIO.setup(drainValvePin, GPIO.OUT)
+    GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel1Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel2Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel4Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(fan1Pin, GPIO.OUT, initial=GPIO.LOW)
+    #GPIO.setup(fan2Pin, GPIO.OUT)
+    #GPIO.setup(fan3Pin, GPIO.OUT)
+    #GPIO.setup(fan4Pin, GPIO.OUT)
+    GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(ledPWMPin, GPIO.OUT)
+    try:
+        ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+        ledPwm.start(0)  # Start at 0% brightness
+        mosfet = ledPwm
+    except Exception as e:
+        ledPwm = None
+        mosfet = None
+        logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
 
-    # Stepper motor driven via PWM on doBleedValveStepperPin
-    GPIO.setup(doBleedValveStepperPin, GPIO.OUT)
-    _bleed_pwm = GPIO.PWM(doBleedValveStepperPin, 50)  # 50 Hz
-    _bleed_pwm.start(0)
+    # Stepper motor (Wantai 42bygh610-1) setup for bleed valve
+    GPIO.setup(bleedValveDirPin, GPIO.OUT)
+    GPIO.setup(bleedValveStepPin, GPIO.OUT)
+    GPIO.setup(bleedValveEnablePin, GPIO.OUT)
+    GPIO.output(bleedValveEnablePin, GPIO.LOW)  # Enable driver (LOW = enabled)
+    bleedValveDriverEnabled = True
 
     def setSourceValveState(isValveOpen: bool):
         global sourceValveOpen
@@ -123,13 +539,26 @@ if isRpiPresent:
         global drainValveOpen
         drainValveOpen = isValveOpen
         print(f"[RPI] drain valve -> {drainValveOpen}")
-        GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
+        #GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
+
+    setMainValve = setRpiMainValve
+    setMixer = setRpiMixer
+    _set_heater_relay = _setRpiHeaterRelay
 
     def setCoolingSystem(active: bool):
         global coolingSystemActive
         coolingSystemActive = active
         print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
-        GPIO.output(coolingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(pel1Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel2Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
+        #GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
+        _update_mixer_state()
+        _update_main_valve_state()
 
     def setCoolingValve(isOpen: bool):
         global coolingValveOpen
@@ -138,10 +567,23 @@ if isRpiPresent:
         GPIO.output(coolingValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
 
     def setHeatingSystem(active: bool):
-        global heatingSystemActive
-        heatingSystemActive = active
-        print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
-        GPIO.output(heatingSystemPin, GPIO.HIGH if active else GPIO.LOW)
+        global heatingSystemActive, _heating_thread
+        with _heating_lock:
+            heatingSystemActive = active
+            print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
+            if active:
+                _update_mixer_state()
+                _update_main_valve_state()
+                if _heating_thread is None or not _heating_thread.is_alive():
+                    _heating_stop_event.clear()
+                    _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
+                    _heating_thread.start()
+            else:
+                _heating_stop_event.set()
+                _set_heater_relay(False)
+                _heating_thread = None
+                _update_mixer_state()
+                _update_main_valve_state()
 
     def setHeatingValve(isOpen: bool):
         global heatingValveOpen
@@ -183,23 +625,21 @@ if isRpiPresent:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
             GPIO.output(doSolenoidValve3, GPIO.LOW)
-                
 
-    def setDoBleedValve(percent: float):
-        global doBleedValvePercent
-        doBleedValvePercent = max(0.0, min(100.0, percent))
-        print(f"[RPI] DO bleed valve (stepper) -> {doBleedValvePercent:.1f}%")
-        _bleed_pwm.ChangeDutyCycle(doBleedValvePercent)
+
 
     # override with RPi implementations
     sourceValveState = setSourceValveState
     drainValveState = setDrainValveState
+    mainValve = setMainValve
+    mainValveState = setMainValve
     coolingSystem = setCoolingSystem
     coolingValve = setCoolingValve
     heatingSystem = setHeatingSystem
     heatingValve = setHeatingValve
+    mixer = setMixer
     doSolenoidValve = setDoSolenoidValve
-    doBleedValve = setDoBleedValve
+    doBleedValve = setDoBleedValveMotor
 
 
 # -----------------------Control logic-----------------------
@@ -209,6 +649,8 @@ if isRpiPresent:
 
 TEMP_TOLERANCE = 0.5   # degC either side of setpoint
 DO_TOLERANCE   = 0.3   # mg/L either side of setpoint
+DO_TRIG_INTERVAL = 30.0
+_last_do_trig_time = 0.0
 
 
 def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
@@ -239,12 +681,14 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
+            mainValve(True)
         elif secondary_temp < low:
             print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
             heatingValve(True)
+            mainValve(True)
 
     elif temperature < low:
         if secondary_temp > high:
@@ -253,12 +697,14 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
             heatingValve(False)
             coolingSystem(True)
             coolingValve(True)
-        elif secondary_temp < low:
+            mainValve(True)
+        else:
             print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating heating")
             coolingSystem(False)
             coolingValve(False)
             heatingSystem(True)
             heatingValve(True)
+            mainValve(True)
 
     else:
         print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
@@ -266,6 +712,7 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
         coolingValve(False)
         heatingSystem(False)
         heatingValve(False)
+        mainValve(False)
 
 
 def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: float = DO_TOLERANCE):
@@ -274,24 +721,28 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
     Low DO  (reading < setpoint - tolerance) -> open solenoid valve, close bleed valve (stepper) by 33%.
     Stable  (within tolerance band)          -> retain current state
     """
+    global _last_do_trig_time
     high = setpoint + tolerance
     low  = setpoint - tolerance
+    
+    if low <= do_level <= high:
+        print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")   # keep your existing stable print
+        return
 
+    now = time.monotonic()
+    if now - _last_do_trig_time < DO_TRIG_INTERVAL:
+        return
+    _last_do_trig_time = now
+    
     if do_level > high:
         print(f"[CONTROL] DO HIGH ({do_level} mg/L > {high} mg/L, setpoint {setpoint} mg/L) - closing solenoid, opening bleed 33%")
         doSolenoidValve(False)
         doBleedValve(doBleedValvePercent + 33.0)
 
-    elif do_level < low:
+    else:
         print(f"[CONTROL] DO LOW ({do_level} mg/L < {low} mg/L, setpoint {setpoint} mg/L) - opening solenoid, closing bleed 33%")
         doSolenoidValve(True)
         doBleedValve(max(0.0, doBleedValvePercent - 33.0))
-
-    else:
-        print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")
-        #doSolenoidValve(doSolenoidValveOpen)
-        #doBleedValve(doBleedValvePercent)
-
 
 # ---------------------------------------------------------------------------
 # DS18B20 temperature sensor (1-Wire, RPi only)
@@ -376,3 +827,63 @@ def read_secondary_temp_sensor():
     except Exception as e:
         print(f"[RPI] Mixing tank DS18B20 read failed ({e}) - using simulated value")
         return None
+
+
+def cleanupGpio():
+    """
+    Disable stepper motor driver (ENABLE pin HIGH), turn off heater relay,
+    cancel mixer timer, turn off mixer, and cleanup GPIO pins on shutdown.
+    """
+    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_thread
+    if _mixer_timer is not None:
+        try:
+            _mixer_timer.cancel()
+            _mixer_timer = None
+        except Exception:
+            pass
+
+    with _heating_lock:
+        heatingSystemActive = False
+        _heating_stop_event.set()
+        _set_heater_relay(False)
+        _heating_thread = None
+
+    mixer(False)
+    mainValve(False)
+
+    if isRpiPresent and GPIO is not None:
+        try:
+            print("[RPI] Closing main water valve...")
+            GPIO.output(mainValvePin, GPIO.LOW)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting main valve: {e}")
+        try:
+            print("[RPI] Turning off heater relay and mixer...")
+            GPIO.output(heatingSystemPin, GPIO.LOW)
+            GPIO.output(mixerPin, GPIO.LOW)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting heater/mixer: {e}")
+        try:
+            if ledPwm is not None:
+                print("[RPI] Stopping LED PWM...")
+                try:
+                    ledPwm.ChangeDutyCycle(0)
+                except Exception:
+                    pass
+                ledPwm.stop()
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while stopping LED PWM: {e}")
+        try:
+            print("[RPI] Disabling bleed valve motor driver (pin HIGH)...")
+            GPIO.output(bleedValveEnablePin, GPIO.HIGH)
+            bleedValveDriverEnabled = False
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while disabling motor driver: {e}")
+        try:
+            print("[RPI] Cleaning up GPIO pins...")
+            GPIO.cleanup()
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while cleaning up GPIO: {e}")
+
+
+atexit.register(cleanupGpio)
