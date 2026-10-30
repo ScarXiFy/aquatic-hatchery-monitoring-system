@@ -494,20 +494,20 @@ doBleedValve = setDummyDoBleedValve
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    GPIO.setup(sourceValvePin, GPIO.OUT)
+    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.LOW)
     #GPIO.setup(drainValvePin, GPIO.OUT)
     GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.LOW)
-    GPIO.setup(pel1Pin, GPIO.OUT)
-    GPIO.setup(pel2Pin, GPIO.OUT)
-    GPIO.setup(pel3Pin, GPIO.OUT)
-    GPIO.setup(pel4Pin, GPIO.OUT)
-    GPIO.setup(fan1Pin, GPIO.OUT)
+    GPIO.setup(pel1Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel2Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(pel4Pin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(fan1Pin, GPIO.OUT, initial=GPIO.LOW)
     #GPIO.setup(fan2Pin, GPIO.OUT)
     #GPIO.setup(fan3Pin, GPIO.OUT)
     #GPIO.setup(fan4Pin, GPIO.OUT)
-    GPIO.setup(coolingValvePin, GPIO.OUT)
+    GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
-    GPIO.setup(heatingValvePin, GPIO.OUT)
+    GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
@@ -649,6 +649,8 @@ if isRpiPresent:
 
 TEMP_TOLERANCE = 0.5   # degC either side of setpoint
 DO_TOLERANCE   = 0.3   # mg/L either side of setpoint
+DO_TRIG_INTERVAL = 30.0
+_last_do_trig_time = 0.0
 
 
 def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
@@ -719,24 +721,28 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
     Low DO  (reading < setpoint - tolerance) -> open solenoid valve, close bleed valve (stepper) by 33%.
     Stable  (within tolerance band)          -> retain current state
     """
+    global _last_do_trig_time
     high = setpoint + tolerance
     low  = setpoint - tolerance
+    
+    if low <= do_level <= high:
+        print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")   # keep your existing stable print
+        return
 
+    now = time.monotonic()
+    if now - _last_do_trig_time < DO_TRIG_INTERVAL:
+        return
+    _last_do_trig_time = now
+    
     if do_level > high:
         print(f"[CONTROL] DO HIGH ({do_level} mg/L > {high} mg/L, setpoint {setpoint} mg/L) - closing solenoid, opening bleed 33%")
         doSolenoidValve(False)
         doBleedValve(doBleedValvePercent + 33.0)
 
-    elif do_level < low:
+    else:
         print(f"[CONTROL] DO LOW ({do_level} mg/L < {low} mg/L, setpoint {setpoint} mg/L) - opening solenoid, closing bleed 33%")
         doSolenoidValve(True)
         doBleedValve(max(0.0, doBleedValvePercent - 33.0))
-
-    else:
-        print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")
-        #doSolenoidValve(doSolenoidValveOpen)
-        #doBleedValve(doBleedValvePercent)
-
 
 # ---------------------------------------------------------------------------
 # DS18B20 temperature sensor (1-Wire, RPi only)
