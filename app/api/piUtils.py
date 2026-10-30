@@ -245,7 +245,7 @@ def setRpiMixer(active: bool):
     mixerActive = active
     print(f"[RPI] mixer motor -> {'ON' if active else 'OFF'}")
     if isRpiPresent and GPIO is not None:
-        GPIO.output(mixerPin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(mixerPin, GPIO.LOW if active else GPIO.HIGH)
 
 setMixer = setRpiMixer
 
