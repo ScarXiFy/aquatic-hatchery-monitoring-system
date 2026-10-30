@@ -20,7 +20,7 @@
     },
     dissolved_oxygen: {
       label: "Dissolved Oxygen",
-      shortLabel: "DO",
+      shortLabel: "Dissolved Oxygen",
       unit: "mg/L",
       color: "#10b981",
       min: 0,
