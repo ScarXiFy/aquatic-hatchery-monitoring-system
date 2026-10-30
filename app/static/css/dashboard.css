@@ -741,9 +741,15 @@ input:focus-visible {
 /* ==========================================================
    Screen 4: Trends
    ========================================================== */
+.trends-header-group {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
 .trend-date-label {
-  margin: 4px 0 0;
-  font-size: 14px;
+  margin: 0;
+  font-size: 18px;
   color: var(--muted);
   font-weight: 700;
 }
