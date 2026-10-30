@@ -199,10 +199,10 @@ class TestMixerAndHeating(unittest.TestCase):
              patch.object(piUtils, 'GPIO', mock_gpio):
 
             piUtils.setMixer(True)
-            mock_gpio.output.assert_called_with(piUtils.mixerPin, 1)
+            mock_gpio.output.assert_called_with(piUtils.mixerPin, 0)
 
             piUtils.setMixer(False)
-            mock_gpio.output.assert_called_with(piUtils.mixerPin, 0)
+            mock_gpio.output.assert_called_with(piUtils.mixerPin, 1)
 
             piUtils._setRpiHeaterRelay(True)
             mock_gpio.output.assert_called_with(piUtils.heatingSystemPin, 1)

@@ -261,9 +261,45 @@ def setRpiMainValve(isOpen: bool):
     mainValveOpen = isOpen
     print(f"[RPI] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
     if isRpiPresent and GPIO is not None:
-        GPIO.output(mainValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+        GPIO.output(mainValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
 
 setMainValve = setRpiMainValve
+
+def setRpiSourceValveState(isValveOpen: bool):
+    global sourceValveOpen
+    sourceValveOpen = isValveOpen
+    print(f"[RPI] source valve -> {sourceValveOpen}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(sourceValvePin, GPIO.LOW if sourceValveOpen else GPIO.HIGH)
+
+setSourceValve = setRpiSourceValveState
+
+def setRpiDrainValveState(isValveOpen: bool):
+    global drainValveOpen
+    drainValveOpen = isValveOpen
+    print(f"[RPI] drain valve -> {drainValveOpen}")
+    #if isRpiPresent and GPIO is not None:
+    #    GPIO.output(drainValvePin, GPIO.LOW if drainValveOpen else GPIO.HIGH)
+
+setDrainValve = setRpiDrainValveState
+
+def setRpiCoolingValve(isOpen: bool):
+    global coolingValveOpen
+    coolingValveOpen = isOpen
+    print(f"[RPI] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(coolingValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
+
+setCoolingValve = setRpiCoolingValve
+
+def setRpiHeatingValve(isOpen: bool):
+    global heatingValveOpen
+    heatingValveOpen = isOpen
+    print(f"[RPI] heating valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
+
+setHeatingValve = setRpiHeatingValve
 
 # Temperature
 def setDummyCoolingSystem(active: bool):
@@ -494,9 +530,9 @@ doBleedValve = setDummyDoBleedValve
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.LOW)
-    #GPIO.setup(drainValvePin, GPIO.OUT)
-    GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.HIGH)
+    #GPIO.setup(drainValvePin, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(pel1Pin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(pel2Pin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.LOW)
@@ -505,9 +541,9 @@ if isRpiPresent:
     #GPIO.setup(fan2Pin, GPIO.OUT)
     #GPIO.setup(fan3Pin, GPIO.OUT)
     #GPIO.setup(fan4Pin, GPIO.OUT)
-    GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
-    GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
@@ -529,17 +565,8 @@ if isRpiPresent:
     GPIO.output(bleedValveEnablePin, GPIO.LOW)  # Enable driver (LOW = enabled)
     bleedValveDriverEnabled = True
 
-    def setSourceValveState(isValveOpen: bool):
-        global sourceValveOpen
-        sourceValveOpen = isValveOpen
-        print(f"[RPI] source valve -> {sourceValveOpen}")
-        GPIO.output(sourceValvePin, GPIO.HIGH if sourceValveOpen else GPIO.LOW)
-
-    def setDrainValveState(isValveOpen: bool):
-        global drainValveOpen
-        drainValveOpen = isValveOpen
-        print(f"[RPI] drain valve -> {drainValveOpen}")
-        #GPIO.output(drainValvePin, GPIO.HIGH if drainValveOpen else GPIO.LOW)
+    setSourceValveState = setRpiSourceValveState
+    setDrainValveState = setRpiDrainValveState
 
     setMainValve = setRpiMainValve
     setMixer = setRpiMixer
@@ -560,11 +587,7 @@ if isRpiPresent:
         _update_mixer_state()
         _update_main_valve_state()
 
-    def setCoolingValve(isOpen: bool):
-        global coolingValveOpen
-        coolingValveOpen = isOpen
-        print(f"[RPI] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
-        GPIO.output(coolingValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+    setCoolingValve = setRpiCoolingValve
 
     def setHeatingSystem(active: bool):
         global heatingSystemActive, _heating_thread
@@ -585,11 +608,7 @@ if isRpiPresent:
                 _update_mixer_state()
                 _update_main_valve_state()
 
-    def setHeatingValve(isOpen: bool):
-        global heatingValveOpen
-        heatingValveOpen = isOpen
-        print(f"[RPI] heating valve -> {'OPEN' if isOpen else 'CLOSED'}")
-        GPIO.output(heatingValvePin, GPIO.HIGH if isOpen else GPIO.LOW)
+    setHeatingValve = setRpiHeatingValve
 
     def setDoSolenoidValve(isOpen: bool):
         global doSolenoidValveOpen
@@ -854,7 +873,10 @@ def cleanupGpio():
     if isRpiPresent and GPIO is not None:
         try:
             print("[RPI] Closing main water valve...")
-            GPIO.output(mainValvePin, GPIO.LOW)
+            GPIO.output(mainValvePin, GPIO.HIGH)
+            GPIO.output(sourceValvePin, GPIO.HIGH)
+            GPIO.output(coolingValvePin, GPIO.HIGH)
+            GPIO.output(heatingValvePin, GPIO.HIGH)
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting main valve: {e}")
         try:

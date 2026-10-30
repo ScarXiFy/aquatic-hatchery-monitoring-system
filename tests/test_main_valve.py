@@ -150,21 +150,21 @@ class TestMainValve(unittest.TestCase):
         self.assertFalse(piUtils.mainValveOpen)
 
     def test_rpi_main_valve_control(self):
-        """Test RPi GPIO output when setting main valve."""
+        """Test RPi GPIO output when setting main valve with inverted active-low logic."""
         mock_gpio = MagicMock()
         with patch.object(piUtils, "GPIO", mock_gpio), patch.object(piUtils, "isRpiPresent", True):
-            # Test opening main valve
+            # Test opening main valve (active-low -> LOW)
             piUtils.setMainValve(True)
             self.assertTrue(piUtils.mainValveOpen)
-            mock_gpio.output.assert_called_with(24, mock_gpio.HIGH)
-
-            # Test closing main valve
-            piUtils.setMainValve(False)
-            self.assertFalse(piUtils.mainValveOpen)
             mock_gpio.output.assert_called_with(24, mock_gpio.LOW)
 
+            # Test closing main valve (active-low -> HIGH)
+            piUtils.setMainValve(False)
+            self.assertFalse(piUtils.mainValveOpen)
+            mock_gpio.output.assert_called_with(24, mock_gpio.HIGH)
+
     def test_cleanup_closes_main_valve(self):
-        """Test cleanupGpio closes the main valve and sets GPIO 26 LOW on RPi."""
+        """Test cleanupGpio closes the main valve and sets GPIO 24 HIGH on RPi."""
         piUtils.mainValve(True)
         self.assertTrue(piUtils.mainValveOpen)
 
@@ -172,7 +172,39 @@ class TestMainValve(unittest.TestCase):
         with patch.object(piUtils, "GPIO", mock_gpio), patch.object(piUtils, "isRpiPresent", True):
             piUtils.cleanupGpio()
             self.assertFalse(piUtils.mainValveOpen)
+            mock_gpio.output.assert_any_call(24, mock_gpio.HIGH)
             mock_gpio.output.assert_any_call(26, mock_gpio.LOW)
+
+    def test_rpi_water_valves_inverted_logic(self):
+        """Test RPi GPIO output for all water valves with reversed logic (active-low: LOW=open/enabled, HIGH=closed/disabled)."""
+        mock_gpio = MagicMock()
+        with patch.object(piUtils, "GPIO", mock_gpio), patch.object(piUtils, "isRpiPresent", True):
+            # Source Valve
+            piUtils.setRpiSourceValveState(True)
+            self.assertTrue(piUtils.sourceValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.sourceValvePin, mock_gpio.LOW)
+
+            piUtils.setRpiSourceValveState(False)
+            self.assertFalse(piUtils.sourceValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.sourceValvePin, mock_gpio.HIGH)
+
+            # Cooling Valve
+            piUtils.setRpiCoolingValve(True)
+            self.assertTrue(piUtils.coolingValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.coolingValvePin, mock_gpio.LOW)
+
+            piUtils.setRpiCoolingValve(False)
+            self.assertFalse(piUtils.coolingValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.coolingValvePin, mock_gpio.HIGH)
+
+            # Heating Valve
+            piUtils.setRpiHeatingValve(True)
+            self.assertTrue(piUtils.heatingValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.heatingValvePin, mock_gpio.LOW)
+
+            piUtils.setRpiHeatingValve(False)
+            self.assertFalse(piUtils.heatingValveOpen)
+            mock_gpio.output.assert_called_with(piUtils.heatingValvePin, mock_gpio.HIGH)
 
     def test_api_route_controls_main_valve(self):
         """Test POST /api/controls/valves/main endpoint."""
