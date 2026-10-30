@@ -578,39 +578,11 @@ input:focus-visible {
   font-weight: 900;
 }
 
-.control-row input[type="range"] {
+.control-row input {
   grid-column: 1 / -1;
   width: 100%;
-  height: 22px;
+  height: 10px;
   accent-color: var(--teal);
-  cursor: pointer;
-  margin: 10px 0;
-  border-radius: 999px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(203, 213, 225, 0.85);
-  outline: none;
-}
-
-.control-row input[type="range"]::-webkit-slider-thumb {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: #ffffff;
-  border: 4px solid var(--teal);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  cursor: pointer;
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-.control-row input[type="range"]::-moz-range-thumb {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: #ffffff;
-  border: 4px solid var(--teal);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
   cursor: pointer;
 }
 
