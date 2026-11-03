@@ -62,45 +62,30 @@ class TestMainValve(unittest.TestCase):
         piUtils.mainValve(False)
         self.assertFalse(piUtils.mainValveOpen)
 
-    def test_main_valve_opens_and_closes_with_cooling(self):
-        """Test main valve automatically opens when cooling is enabled and closes when disabled."""
+    def test_main_valve_remains_open_for_constant_circulation(self):
+        """Test main valve opens and stays open when cooling/heating systems are enabled and disabled."""
         self.assertFalse(piUtils.mainValveOpen)
         piUtils.coolingSystem(True)
         self.assertTrue(piUtils.coolingSystemActive)
         self.assertTrue(piUtils.mainValveOpen)
 
+        # Disabling cooling should keep main valve OPEN for constant circulation
         piUtils.coolingSystem(False)
         self.assertFalse(piUtils.coolingSystemActive)
-        self.assertFalse(piUtils.mainValveOpen)
+        self.assertTrue(piUtils.mainValveOpen)
 
-    def test_main_valve_opens_and_closes_with_heating(self):
-        """Test main valve automatically opens when heating is enabled and closes when disabled."""
-        self.assertFalse(piUtils.mainValveOpen)
+        # Enabling heating
         piUtils.heatingSystem(True)
         self.assertTrue(piUtils.heatingSystemActive)
         self.assertTrue(piUtils.mainValveOpen)
 
+        # Disabling heating should also keep main valve OPEN
         piUtils.heatingSystem(False)
         self.assertFalse(piUtils.heatingSystemActive)
-        self.assertFalse(piUtils.mainValveOpen)
-
-    def test_main_valve_remains_open_if_other_system_active(self):
-        """Test main valve stays open when switching from cooling to heating or vice versa."""
-        piUtils.coolingSystem(True)
         self.assertTrue(piUtils.mainValveOpen)
-
-        # Enable heating while cooling is active
-        piUtils.heatingSystem(True)
-        # Disable cooling - heating is still active
-        piUtils.coolingSystem(False)
-        self.assertTrue(piUtils.mainValveOpen)
-
-        # Disable heating - now both are off
-        piUtils.heatingSystem(False)
-        self.assertFalse(piUtils.mainValveOpen)
 
     def test_apply_temperature_control_high_temp(self):
-        """Test applyTemperatureControl opens main valve when tank temperature is HIGH."""
+        """Test applyTemperatureControl opens cooling valve and main valve when tank temperature is HIGH."""
         self.assertFalse(piUtils.mainValveOpen)
         piUtils.applyTemperatureControl(
             temperature=28.0,
@@ -110,10 +95,12 @@ class TestMainValve(unittest.TestCase):
         )
         self.assertTrue(piUtils.coolingSystemActive)
         self.assertTrue(piUtils.coolingValveOpen)
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertFalse(piUtils.heatingValveOpen)
         self.assertTrue(piUtils.mainValveOpen)
 
     def test_apply_temperature_control_low_temp(self):
-        """Test applyTemperatureControl opens main valve when tank temperature is LOW."""
+        """Test applyTemperatureControl opens heating valve and main valve when tank temperature is LOW."""
         self.assertFalse(piUtils.mainValveOpen)
         piUtils.applyTemperatureControl(
             temperature=24.0,
@@ -123,31 +110,73 @@ class TestMainValve(unittest.TestCase):
         )
         self.assertTrue(piUtils.heatingSystemActive)
         self.assertTrue(piUtils.heatingValveOpen)
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertFalse(piUtils.coolingValveOpen)
         self.assertTrue(piUtils.mainValveOpen)
 
-    def test_apply_temperature_control_stable_temp(self):
-        """Test applyTemperatureControl closes main valve when tank temperature is STABLE."""
-        # First trigger heating to open the valve
+    def test_apply_temperature_control_stable_temp_alternation(self):
+        """
+        Test applyTemperatureControl maintains constant circulation at stable temperature:
+        - If last active was heating -> heating valve OFF, cooling valve ON (flow from cooling).
+        - If last active was cooling -> cooling valve OFF, heating valve ON (flow from heating).
+        - Main valve is ALWAYS ON.
+        - At least one valve is ALWAYS ON.
+        """
+        # 1. Trigger heating (temp < desired)
         piUtils.applyTemperatureControl(
             temperature=24.0,
             setpoint=26.0,
             tolerance=0.5,
             secondary_temp=24.0,
         )
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertFalse(piUtils.coolingValveOpen)
         self.assertTrue(piUtils.mainValveOpen)
+        self.assertEqual(piUtils.last_temp_system, "heating")
 
-        # Now supply a stable temperature reading
+        # 2. Temperature stabilizes at setpoint (temp == desired) after heating
         piUtils.applyTemperatureControl(
             temperature=26.0,
             setpoint=26.0,
             tolerance=0.5,
             secondary_temp=26.0,
         )
-        self.assertFalse(piUtils.coolingSystemActive)
         self.assertFalse(piUtils.heatingSystemActive)
-        self.assertFalse(piUtils.coolingValveOpen)
+        self.assertFalse(piUtils.coolingSystemActive)
+        # Last on was heating -> heating valve off, cooling valve on
         self.assertFalse(piUtils.heatingValveOpen)
-        self.assertFalse(piUtils.mainValveOpen)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertTrue(piUtils.mainValveOpen)
+        # Verify at least one valve is open
+        self.assertTrue(piUtils.coolingValveOpen or piUtils.heatingValveOpen)
+
+        # 3. Trigger cooling (temp > desired)
+        piUtils.applyTemperatureControl(
+            temperature=28.0,
+            setpoint=26.0,
+            tolerance=0.5,
+            secondary_temp=28.0,
+        )
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertFalse(piUtils.heatingValveOpen)
+        self.assertTrue(piUtils.mainValveOpen)
+        self.assertEqual(piUtils.last_temp_system, "cooling")
+
+        # 4. Temperature stabilizes at setpoint (temp == desired) after cooling
+        piUtils.applyTemperatureControl(
+            temperature=26.0,
+            setpoint=26.0,
+            tolerance=0.5,
+            secondary_temp=26.0,
+        )
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertFalse(piUtils.coolingSystemActive)
+        # Last on was cooling -> cooling valve off, heating valve on
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertFalse(piUtils.coolingValveOpen)
+        self.assertTrue(piUtils.mainValveOpen)
+        # Verify at least one valve is open
+        self.assertTrue(piUtils.coolingValveOpen or piUtils.heatingValveOpen)
 
     def test_rpi_main_valve_control(self):
         """Test RPi GPIO output when setting main valve with inverted active-low logic."""

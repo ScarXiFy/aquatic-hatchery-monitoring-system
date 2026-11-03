@@ -79,6 +79,7 @@ heatingSystemActive = False
 heatingValveOpen = False
 heaterActive = False
 mixerActive = False
+last_temp_system = "cooling"  # Tracks last active temperature system ("heating" or "cooling")
 
 # Synchronization for mixer and heater
 _mixer_timer = None
@@ -217,13 +218,9 @@ mainValve = setDummyMainValve
 mainValveState = setDummyMainValve
 
 def _update_main_valve_state():
-    temp_system_active = coolingSystemActive or heatingSystemActive
-    if temp_system_active:
-        if not mainValveOpen:
-            mainValve(True)
-    else:
-        if mainValveOpen:
-            mainValve(False)
+    # Main valve is kept always ON for constant water circulation
+    if not mainValveOpen:
+        mainValve(True)
 
 def setDummyMixer(active: bool):
     global mixerActive
@@ -725,64 +722,66 @@ _last_do_trig_time = 0.0
 
 def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
     """
-    Uses the main tank reading to detect whether a threshold has been crossed.
-    Once triggered, uses the Mixing sensor reading (heater/chiller output line)
-    to drive the heating/cooling actuators. Falls back to a simulated Mixing tank temp
-    value if the Mixing sensor is not connected.
-
-    High temp  (tank > setpoint + tolerance) -> enable cooling system + open cooling valve.
-    Low temp   (tank < setpoint - tolerance) -> enable heating system + open heating valve.
-    Stable     (within tolerance band)       -> disable both systems and close both valves.
+    Maintains water temperature and guarantees continuous water circulation:
+    - Main valve: ALWAYS ON for constant circulation.
+    - temp > setpoint + tolerance:
+        Cooling system ON, cooling valve ON (flow from cooling), heating & heating valve OFF.
+        Records last active system as 'cooling'.
+    - temp < setpoint - tolerance:
+        Heating system ON, heating valve ON (flow from heat), cooling & cooling valve OFF.
+        Records last active system as 'heating'.
+    - temp == setpoint (within tolerance band):
+        Both heating and cooling active systems turn OFF.
+        At least one valve remains OPEN to maintain constant circulation:
+        - If last active was heating: heating valve OFF, cooling valve ON (flow from cooling).
+        - If last active was cooling: cooling valve OFF, heating valve ON (flow from heating).
     """
+    global last_temp_system
     high = setpoint + tolerance
     low  = setpoint - tolerance
 
-    # Resolve secondary temperature: use provided value, then try sensor, then simulate
+    # Resolve secondary temperature if provided
     if secondary_temp is None:
         secondary_temp = read_secondary_temp_sensor()
     if secondary_temp is None:
         secondary_temp = round(temperature + random.uniform(-0.5, 0.5), 2)
-        print(f"[DUMMY] Mixing temperature simulated as {secondary_temp}C")
+
+    # Ensure main valve is always open for constant circulation
+    if not mainValveOpen:
+        mainValve(True)
 
     if temperature > high:
-        if secondary_temp > high:
-            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating cooling")
-            heatingSystem(False)
-            heatingValve(False)
-            coolingSystem(True)
-            coolingValve(True)
-            mainValve(True)
-        elif secondary_temp < low:
-            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) | Mixing: {secondary_temp}C - activating heating")
-            coolingSystem(False)
-            coolingValve(False)
-            heatingSystem(True)
-            heatingValve(True)
-            mainValve(True)
-
-    elif temperature < low:
-        if secondary_temp > high:
-            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating cooling")
-            heatingSystem(False)
-            heatingValve(False)
-            coolingSystem(True)
-            coolingValve(True)
-            mainValve(True)
-        else:
-            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) | Mixing: {secondary_temp}C - activating heating")
-            coolingSystem(False)
-            coolingValve(False)
-            heatingSystem(True)
-            heatingValve(True)
-            mainValve(True)
-
-    else:
-        print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C) - all systems idle")
-        coolingSystem(False)
-        coolingValve(False)
+        print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) - activating cooling (cooling valve ON, flow from cooling)")
+        last_temp_system = "cooling"
         heatingSystem(False)
         heatingValve(False)
-        mainValve(False)
+        coolingSystem(True)
+        coolingValve(True)
+        mainValve(True)
+
+    elif temperature < low:
+        print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) - activating heating (heating valve ON, flow from heating)")
+        last_temp_system = "heating"
+        coolingSystem(False)
+        coolingValve(False)
+        heatingSystem(True)
+        heatingValve(True)
+        mainValve(True)
+
+    else:
+        print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C)")
+        coolingSystem(False)
+        heatingSystem(False)
+        mainValve(True)
+
+        if last_temp_system == "heating":
+            heatingValve(False)
+            coolingValve(True)
+            print(f"[CONTROL] Circulation: Last on was heating -> heating valve OFF, cooling valve ON (flow from cooling)")
+        else:
+            coolingValve(False)
+            heatingValve(True)
+            print(f"[CONTROL] Circulation: Last on was cooling -> cooling valve OFF, heating valve ON (flow from heating)")
 
 
 def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: float = DO_TOLERANCE):
