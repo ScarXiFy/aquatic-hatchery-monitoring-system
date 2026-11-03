@@ -57,6 +57,13 @@ except:
     GPIO = None
     print("RPi module not present...")
 
+isPigpioPresent: bool = True
+try:
+    import pigpio
+except ImportError:
+    isPigpioPresent = False
+    pigpio = None
+
 CW = GPIO.HIGH if isRpiPresent else 1
 CCW = GPIO.LOW if isRpiPresent else 0
 MOTOR_ENABLE = GPIO.LOW if isRpiPresent else 0
@@ -89,6 +96,7 @@ motorInit: bool = False
 
 currentLedLux = 0.0
 currentLedDutyCycle = 0.0
+pigpio_pi = None
 ledPwm = None
 mosfet = None
 
@@ -118,9 +126,10 @@ setDummyLedIntensity = setDummyLux
 def setRpiLux(target_lux: float):
     """
     Converts a target lux value into a PWM duty cycle (0 to 100)
-    and applies it to the MOSFET using RPi.GPIO.
+    and applies it to the MOSFET using pigpio DMA PWM on PIN 18.
+    Falls back to RPi.GPIO software PWM if pigpio daemon is unavailable.
     """
-    global currentLedLux, currentLedDutyCycle, ledPwm, mosfet
+    global currentLedLux, currentLedDutyCycle, pigpio_pi, ledPwm, mosfet
     try:
         target_lux = float(target_lux)
     except (TypeError, ValueError):
@@ -131,20 +140,42 @@ def setRpiLux(target_lux: float):
     currentLedLux = target_lux
     currentLedDutyCycle = duty_cycle
 
-    if ledPwm is None and isRpiPresent and GPIO is not None:
+    # Try initializing pigpio if available and not yet connected
+    if pigpio_pi is None and isPigpioPresent and pigpio is not None:
         try:
-            GPIO.setup(ledPWMPin, GPIO.OUT)
-            ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
-            ledPwm.start(0)
-            mosfet = ledPwm
+            temp_pi = pigpio.pi()
+            if getattr(temp_pi, "connected", False):
+                pigpio_pi = temp_pi
+                pigpio_pi.set_mode(ledPWMPin, pigpio.OUTPUT)
+                pigpio_pi.set_PWM_frequency(ledPWMPin, LED_PWM_FREQ)
+                pigpio_pi.set_PWM_range(ledPWMPin, 255)
+                ledPwm = pigpio_pi
+                mosfet = pigpio_pi
+            else:
+                logging.warning("[RPI] pigpiod daemon not connected. Run 'sudo pigpiod -t 1' for DMA PWM.")
         except Exception as e:
-            logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
+            logging.error(f"[RPI] Failed to initialize pigpio: {e}")
 
-    if ledPwm is not None:
+    if pigpio_pi is not None and getattr(pigpio_pi, "connected", True):
         try:
-            ledPwm.ChangeDutyCycle(duty_cycle)
+            pwm_val = int(round((duty_cycle / 100.0) * 255.0))
+            pigpio_pi.set_PWM_dutycycle(ledPWMPin, pwm_val)
         except Exception as e:
-            logging.error(f"[RPI] Failed to change LED duty cycle: {e}")
+            logging.error(f"[RPI] Failed to set pigpio DMA PWM duty cycle: {e}")
+    elif isRpiPresent and GPIO is not None:
+        if ledPwm is None:
+            try:
+                GPIO.setup(ledPWMPin, GPIO.OUT)
+                ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+                ledPwm.start(0)
+                mosfet = ledPwm
+            except Exception as e:
+                logging.error(f"[RPI] Failed to initialize fallback LED PWM: {e}")
+        if ledPwm is not None:
+            try:
+                ledPwm.ChangeDutyCycle(duty_cycle)
+            except Exception as e:
+                logging.error(f"[RPI] Failed to change fallback LED duty cycle: {e}")
     print(f"[RPI] Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
 
 setRpiLed = setRpiLux
@@ -548,15 +579,35 @@ if isRpiPresent:
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(ledPWMPin, GPIO.OUT)
-    try:
-        ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
-        ledPwm.start(0)  # Start at 0% brightness
-        mosfet = ledPwm
-    except Exception as e:
-        ledPwm = None
-        mosfet = None
-        logging.error(f"[RPI] Failed to initialize LED PWM: {e}")
+    # Initialize LED PWM via pigpio DMA PWM
+    if isPigpioPresent and pigpio is not None:
+        try:
+            temp_pi = pigpio.pi()
+            if getattr(temp_pi, "connected", False):
+                pigpio_pi = temp_pi
+                pigpio_pi.set_mode(ledPWMPin, pigpio.OUTPUT)
+                pigpio_pi.set_PWM_frequency(ledPWMPin, LED_PWM_FREQ)
+                pigpio_pi.set_PWM_range(ledPWMPin, 255)
+                pigpio_pi.set_PWM_dutycycle(ledPWMPin, 0)
+                ledPwm = pigpio_pi
+                mosfet = pigpio_pi
+                print(f"[RPI] pigpio DMA PWM initialized on PIN {ledPWMPin} ({LED_PWM_FREQ}Hz)")
+            else:
+                logging.warning("[RPI] pigpio daemon not running. Run 'sudo pigpiod -t 1' for flicker-free LED.")
+        except Exception as e:
+            logging.error(f"[RPI] Failed to initialize pigpio for LED: {e}")
+
+    # Fallback to RPi.GPIO software PWM if pigpio is not active
+    if pigpio_pi is None:
+        GPIO.setup(ledPWMPin, GPIO.OUT)
+        try:
+            ledPwm = GPIO.PWM(ledPWMPin, LED_PWM_FREQ)
+            ledPwm.start(0)  # Start at 0% brightness
+            mosfet = ledPwm
+        except Exception as e:
+            ledPwm = None
+            mosfet = None
+            logging.error(f"[RPI] Failed to initialize fallback LED PWM: {e}")
 
     # Stepper motor (Wantai 42bygh610-1) setup for bleed valve
     GPIO.setup(bleedValveDirPin, GPIO.OUT)
@@ -853,7 +904,7 @@ def cleanupGpio():
     Disable stepper motor driver (ENABLE pin HIGH), turn off heater relay,
     cancel mixer timer, turn off mixer, and cleanup GPIO pins on shutdown.
     """
-    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_thread
+    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_thread, pigpio_pi, ledPwm, mosfet
     if _mixer_timer is not None:
         try:
             _mixer_timer.cancel()
@@ -886,13 +937,31 @@ def cleanupGpio():
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting heater/mixer: {e}")
         try:
+            if pigpio_pi is not None:
+                print("[RPI] Stopping pigpio LED PWM...")
+                try:
+                    pigpio_pi.set_PWM_dutycycle(ledPWMPin, 0)
+                except Exception:
+                    pass
+                try:
+                    pigpio_pi.stop()
+                except Exception:
+                    pass
+                pigpio_pi = None
             if ledPwm is not None:
                 print("[RPI] Stopping LED PWM...")
                 try:
-                    ledPwm.ChangeDutyCycle(0)
+                    if hasattr(ledPwm, "ChangeDutyCycle"):
+                        ledPwm.ChangeDutyCycle(0)
                 except Exception:
                     pass
-                ledPwm.stop()
+                try:
+                    if hasattr(ledPwm, "stop"):
+                        ledPwm.stop()
+                except Exception:
+                    pass
+                ledPwm = None
+                mosfet = None
         except Exception as e:
             logging.warning(f"[RPI] Exception while stopping LED PWM: {e}")
         try:

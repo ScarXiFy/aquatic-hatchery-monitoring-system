@@ -25,11 +25,15 @@ class TestLEDOperation(unittest.TestCase):
         # Reset LED state before each test
         piUtils.currentLedLux = 0.0
         piUtils.currentLedDutyCycle = 0.0
+        piUtils.pigpio_pi = None
         piUtils.ledPwm = None
         piUtils.mosfet = None
 
     def tearDown(self):
         piUtils.set_lux(0)
+        piUtils.pigpio_pi = None
+        piUtils.ledPwm = None
+        piUtils.mosfet = None
         self.app_context.pop()
 
     def test_pin_and_constants(self):
@@ -64,13 +68,48 @@ class TestLEDOperation(unittest.TestCase):
         piUtils.setDummyLux(4500)
         self.assertEqual(piUtils.currentLedDutyCycle, 100.0)
 
-    def test_rpi_gpio_pwm_control(self):
-        """Test RPi mode GPIO PWM initialization and ChangeDutyCycle output on PIN 18."""
+    def test_rpi_pigpio_dma_pwm_control(self):
+        """Test RPi mode pigpio DMA PWM initialization and set_PWM_dutycycle output on PIN 18."""
+        mock_pigpio = MagicMock()
+        mock_pi_instance = MagicMock()
+        mock_pi_instance.connected = True
+        mock_pigpio.pi.return_value = mock_pi_instance
+        mock_pigpio.OUTPUT = 1
+
+        with patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "isPigpioPresent", True), \
+             patch.object(piUtils, "pigpio", mock_pigpio), \
+             patch.object(piUtils, "pigpio_pi", None):
+
+            # Test setting 1500 lux (50% power -> 128 / 255)
+            piUtils.set_lux(1500)
+
+            mock_pigpio.pi.assert_called_once()
+            mock_pi_instance.set_mode.assert_called_with(18, mock_pigpio.OUTPUT)
+            mock_pi_instance.set_PWM_frequency.assert_called_with(18, 1000)
+            mock_pi_instance.set_PWM_range.assert_called_with(18, 255)
+            mock_pi_instance.set_PWM_dutycycle.assert_called_with(18, 128)
+            self.assertEqual(piUtils.currentLedLux, 1500.0)
+            self.assertAlmostEqual(piUtils.currentLedDutyCycle, 50.0)
+
+            # Test setting 3000 lux (100% power -> 255)
+            piUtils.set_lux(3000)
+            mock_pi_instance.set_PWM_dutycycle.assert_called_with(18, 255)
+
+            # Test setting 0 lux (0% power -> 0)
+            piUtils.set_lux(0)
+            mock_pi_instance.set_PWM_dutycycle.assert_called_with(18, 0)
+
+    def test_rpi_gpio_fallback_pwm_control(self):
+        """Test fallback to RPi.GPIO PWM when pigpio is unavailable."""
         mock_gpio = MagicMock()
         mock_pwm_instance = MagicMock()
         mock_gpio.PWM.return_value = mock_pwm_instance
 
-        with patch.object(piUtils, "isRpiPresent", True), patch.object(piUtils, "GPIO", mock_gpio):
+        with patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "isPigpioPresent", False), \
+             patch.object(piUtils, "pigpio_pi", None), \
+             patch.object(piUtils, "GPIO", mock_gpio):
             # Test setting 1500 lux (50% power)
             piUtils.set_lux(1500)
 
@@ -124,12 +163,26 @@ class TestLEDOperation(unittest.TestCase):
             piUtils.initializeLed(self.app)
             mock_set_lux.assert_called_with(500.0)
 
-    def test_cleanup_gpio_stops_pwm(self):
-        """Test cleanupGpio safely stops the LED PWM signal and cleans up GPIO."""
+    def test_cleanup_gpio_stops_pigpio_pwm(self):
+        """Test cleanupGpio safely stops the pigpio DMA PWM signal and cleans up GPIO."""
+        mock_gpio = MagicMock()
+        mock_pi = MagicMock()
+
+        with patch.object(piUtils, "isRpiPresent", True), patch.object(piUtils, "GPIO", mock_gpio):
+            piUtils.pigpio_pi = mock_pi
+            piUtils.cleanupGpio()
+
+            mock_pi.set_PWM_dutycycle.assert_called_with(18, 0)
+            mock_pi.stop.assert_called_once()
+            mock_gpio.cleanup.assert_called_once()
+
+    def test_cleanup_gpio_stops_fallback_pwm(self):
+        """Test cleanupGpio safely stops fallback RPi.GPIO PWM signal if active."""
         mock_gpio = MagicMock()
         mock_pwm = MagicMock()
 
         with patch.object(piUtils, "isRpiPresent", True), patch.object(piUtils, "GPIO", mock_gpio):
+            piUtils.pigpio_pi = None
             piUtils.ledPwm = mock_pwm
             piUtils.cleanupGpio()
 
@@ -140,30 +193,34 @@ class TestLEDOperation(unittest.TestCase):
 
 def run_hardware_test(pin=PWM_PIN):
     """
-    Standalone hardware test sequence on Raspberry Pi.
+    Standalone hardware test sequence on Raspberry Pi using pigpio DMA PWM.
     Cycles through hatchery lighting levels: [0, 100, 500, 1000, 3000] lux.
     """
     import time
     try:
-        import RPi.GPIO as GPIO
+        import pigpio
     except ImportError:
-        print("RPi.GPIO not installed. Hardware test can only run on Raspberry Pi.")
+        print("pigpio not installed. Hardware test requires pigpio ('pip install pigpio').")
         return
 
-    GPIO.setmode(GPIO.BCM)
-    GPIO.setup(pin, GPIO.OUT)
+    pi = pigpio.pi()
+    if not pi.connected:
+        print("pigpio daemon not running. Please start it with 'sudo pigpiod -t 1'.")
+        return
 
-    mosfet = GPIO.PWM(pin, LED_PWM_FREQ)
-    mosfet.start(0)
+    pi.set_mode(pin, pigpio.OUTPUT)
+    pi.set_PWM_frequency(pin, LED_PWM_FREQ)
+    pi.set_PWM_range(pin, 255)
 
     def _set_lux(target_lux):
         duty_cycle = (target_lux / MAX_LUX) * 100.0
         duty_cycle = max(0.0, min(100.0, duty_cycle))
-        mosfet.ChangeDutyCycle(duty_cycle)
-        print(f"Lights set to {target_lux} lux ({duty_cycle:.1f}% power)")
+        pwm_val = int(round((duty_cycle / 100.0) * 255.0))
+        pi.set_PWM_dutycycle(pin, pwm_val)
+        print(f"Lights set to {target_lux} lux ({duty_cycle:.1f}% power, PWM {pwm_val}/255)")
 
     try:
-        print(f"Starting hatchery lighting test on PWM PIN {pin}...")
+        print(f"Starting hatchery lighting test with pigpio DMA PWM on PIN {pin}...")
         hatchery_levels = [0, 100, 500, 1000, 3000]
         for lux in hatchery_levels:
             _set_lux(lux)
@@ -173,9 +230,9 @@ def run_hardware_test(pin=PWM_PIN):
     except KeyboardInterrupt:
         print("\nScript interrupted. Turning off lights.")
     finally:
-        mosfet.stop()
-        GPIO.cleanup(pin)
-        print("Hardware test finished and GPIO cleaned up.")
+        pi.set_PWM_dutycycle(pin, 0)
+        pi.stop()
+        print("Hardware test finished and pigpio released.")
 
 
 if __name__ == "__main__":
