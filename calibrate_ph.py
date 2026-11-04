@@ -39,12 +39,14 @@ class PHCalibrationLogger:
         channel: int = DEFAULT_ADC_CHANNEL,
         notes: str = None,
         simulate: bool = False,
+        reset: bool = False,
     ):
         self.db_path = Path(db_path)
         self.interval = interval
         self.channel = channel
         self.notes = notes
         self.simulate = simulate
+        self.reset = reset
         self.conn = None
         self.adc_service = None
         self.is_hardware_available = False
@@ -61,6 +63,10 @@ class PHCalibrationLogger:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         with self.conn:
+            if self.reset:
+                self.conn.execute("DROP TABLE IF EXISTS ph_calibration_readings")
+                print(f"[INFO] Cleared previous readings from {self.db_path.name} (--reset).")
+
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ph_calibration_readings (
@@ -318,6 +324,11 @@ def main():
         help="Force simulation mode without connecting to real ADC hardware",
     )
     parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Clear previous calibration readings in the database before starting",
+    )
+    parser.add_argument(
         "--view",
         action="store_true",
         help="View recent calibration records stored in the database and exit",
@@ -345,6 +356,7 @@ def main():
         channel=args.channel,
         notes=args.notes,
         simulate=args.simulate,
+        reset=args.reset,
     )
     logger.run()
 

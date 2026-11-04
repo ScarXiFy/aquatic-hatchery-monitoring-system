@@ -116,6 +116,44 @@ class TestPHCalibration(unittest.TestCase):
         # Check view_history doesn't throw
         view_history(self.db_path, limit=10)
 
+    def test_multiple_runs_append_data(self):
+        # First session
+        logger1 = PHCalibrationLogger(db_path=self.db_path, notes="Run 1", simulate=True)
+        logger1.record_reading(voltage=2.50, timestamp="2026-11-04 12:00:00")
+        logger1.close()
+
+        # Second session (program run again)
+        logger2 = PHCalibrationLogger(db_path=self.db_path, notes="Run 2", simulate=True)
+        logger2.record_reading(voltage=2.45, timestamp="2026-11-04 12:05:00")
+        logger2.close()
+
+        # Check that both readings are preserved in the DB
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM ph_calibration_readings")
+        total = cursor.fetchone()[0]
+        self.assertEqual(total, 2)
+        conn.close()
+
+    def test_reset_clears_data(self):
+        # Create initial data
+        logger1 = PHCalibrationLogger(db_path=self.db_path, simulate=True)
+        logger1.record_reading(voltage=2.50, timestamp="2026-11-04 12:00:00")
+        logger1.close()
+
+        # Run with reset=True
+        logger2 = PHCalibrationLogger(db_path=self.db_path, simulate=True, reset=True)
+        logger2.record_reading(voltage=2.10, timestamp="2026-11-04 12:10:00")
+        logger2.close()
+
+        conn = sqlite3.connect(str(self.db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*), id FROM ph_calibration_readings")
+        row = cursor.fetchone()
+        self.assertEqual(row[0], 1)
+        self.assertEqual(row[1], 1)
+        conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
