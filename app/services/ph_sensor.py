@@ -9,6 +9,14 @@ class PHSensorService:
     def __init__(self, adc_service=None):
         self.adc_service = adc_service or ADCService()
 
+    def _voltage_to_ph(self, voltage: float, slope: float = -6.41401, offset: float = 17.29167) -> float:
+        """
+        Converts analog voltage to pH using the calibrated linear equation:
+        y = m * x + b
+        where m is slope (-6.41401) and b is offset (17.29167).
+        """
+        return slope * voltage + offset
+
     def read_ph(self) -> float:
         """
         Reads filtered voltage from ADCService, converts it to pH using configured constants,
@@ -17,16 +25,16 @@ class PHSensorService:
         try:
             # Load config parameters (with defaults just in case)
             channel = 0
-            neutral_voltage = 2.50
-            slope = 0.18
+            slope = -6.41401
+            offset = 17.29167
             ph_min = 0.0
             ph_max = 14.0
 
             try:
                 if current_app:
                     channel = current_app.config.get("PH_ADC_CHANNEL", 0)
-                    neutral_voltage = current_app.config.get("PH_NEUTRAL_VOLTAGE", 2.50)
-                    slope = current_app.config.get("PH_SLOPE", 0.18)
+                    slope = current_app.config.get("PH_SLOPE", -6.41401)
+                    offset = current_app.config.get("PH_OFFSET", 17.29167)
                     ph_min = current_app.config.get("PH_MIN", 0.0)
                     ph_max = current_app.config.get("PH_MAX", 14.0)
             except RuntimeError:
@@ -36,8 +44,8 @@ class PHSensorService:
             # Request filtered voltage from ADCService
             voltage = self.adc_service.read_filtered_voltage(channel)
 
-            # Compute pH: ph = 7.0 + (PH_NEUTRAL_VOLTAGE - voltage) / PH_SLOPE
-            ph = 7.0 + (neutral_voltage - voltage) / slope
+            # Compute pH: y = m * x + b
+            ph = self._voltage_to_ph(voltage, slope=slope, offset=offset)
 
             # Clamp the final result between PH_MIN and PH_MAX
             ph_clamped = max(ph_min, min(ph_max, ph))

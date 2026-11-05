@@ -59,23 +59,23 @@ class TestADCService(unittest.TestCase):
 class TestPHSensorService(unittest.TestCase):
     def test_voltage_to_ph_conversion(self):
         mock_adc = MagicMock()
-        # Mock 2.5V -> pH 7.0
-        mock_adc.read_filtered_voltage.return_value = 2.5
+        # Mock 1.6045V -> pH ~7.00 (-6.41401 * 1.6045 + 17.29167)
+        mock_adc.read_filtered_voltage.return_value = 1.6045
         service = PHSensorService(adc_service=mock_adc)
         self.assertEqual(service.read_ph(), 7.0)
 
-        # Mock 2.14V -> pH 9.0 (7 + (2.5 - 2.14) / 0.18 = 7 + 0.36 / 0.18 = 9.0)
-        mock_adc.read_filtered_voltage.return_value = 2.14
-        self.assertEqual(service.read_ph(), 9.0)
+        # Mock 2.0V -> pH 4.46 (-6.41401 * 2.0 + 17.29167 = 4.46365)
+        mock_adc.read_filtered_voltage.return_value = 2.0
+        self.assertEqual(service.read_ph(), 4.46)
 
     def test_ph_clamping(self):
         mock_adc = MagicMock()
-        # Voltage that would result in pH > 14
+        # Voltage that would result in pH > 14 (e.g. 0.5V -> 14.08)
         mock_adc.read_filtered_voltage.return_value = 0.5
         service = PHSensorService(adc_service=mock_adc)
         self.assertEqual(service.read_ph(), 14.0)
 
-        # Voltage that would result in pH < 0
+        # Voltage that would result in pH < 0 (e.g. 4.5V -> -11.57)
         mock_adc.read_filtered_voltage.return_value = 4.5
         service = PHSensorService(adc_service=mock_adc)
         self.assertEqual(service.read_ph(), 0.0)

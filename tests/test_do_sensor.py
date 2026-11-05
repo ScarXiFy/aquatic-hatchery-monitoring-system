@@ -11,14 +11,15 @@ from app.services.do_sensor import DOSensorService
 class TestDOSensorService(unittest.TestCase):
     def test_voltage_to_do_conversion(self):
         mock_adc = MagicMock()
-        # Mock 1.65V -> DO 5.0 mg/L
-        mock_adc.read_filtered_voltage.return_value = 1.65
+        # Mock 1.0V -> DO 6.26 mg/L (5.93086 * 1.0 + 0.3273368 = 6.258)
+        mock_adc.read_filtered_voltage.return_value = 1.0
         service = DOSensorService(adc_service=mock_adc)
-        self.assertAlmostEqual(service.read_do(), 5.0)
+        self.assertAlmostEqual(service.read_do(), 6.26)
 
-        # Mock 3.3V -> DO 10.0 mg/L
-        mock_adc.read_filtered_voltage.return_value = 3.3
-        self.assertAlmostEqual(service.read_do(), 10.0)
+        # Mock 2.0V -> DO 12.19 mg/L (5.93086 * 2.0 + 0.3273368 = 12.189)
+        mock_adc.read_filtered_voltage.return_value = 2.0
+        service = DOSensorService(adc_service=mock_adc)
+        self.assertAlmostEqual(service.read_do(), 12.19)
 
     def test_do_clamping(self):
         mock_adc = MagicMock()
@@ -43,3 +44,7 @@ class TestDOSensorService(unittest.TestCase):
         self.assertIsNone(do_val)
         # Should log exception
         mock_logger.exception.assert_called_with("Failed to read Dissolved Oxygen sensor")
+
+
+if __name__ == "__main__":
+    unittest.main()
