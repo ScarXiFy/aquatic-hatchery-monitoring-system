@@ -172,14 +172,15 @@ class CalibratedSensorReader:
 
         if self.sensor_key == "temp":
             try:
-                from app.api.piUtils import read_temp_sensor, isRpiPresent
-                temp_val = read_temp_sensor()
-                if temp_val is not None and isRpiPresent:
-                    self.is_hardware_available = True
-                    print("[HARDWARE] Main Tank DS18B20 Temperature sensor detected.")
-                else:
-                    self.is_hardware_available = False
-                    print("[WARNING] Main Tank DS18B20 not detected. Falling back to simulated readings.")
+                from app.services.temp_sensor import is_w1_sensor_available, read_main_tank_temp
+                if is_w1_sensor_available():
+                    temp_val = read_main_tank_temp()
+                    if temp_val is not None:
+                        self.is_hardware_available = True
+                        print("[HARDWARE] Main Tank DS18B20 Temperature sensor detected.")
+                        return
+                self.is_hardware_available = False
+                print("[WARNING] Main Tank DS18B20 not detected. Falling back to simulated readings.")
             except Exception as e:
                 self.is_hardware_available = False
                 print(f"[WARNING] Temperature sensor init failed ({e}). Falling back to simulation.")
@@ -204,8 +205,8 @@ class CalibratedSensorReader:
         if self.sensor_key == "temp":
             if self.is_hardware_available:
                 try:
-                    from app.api.piUtils import read_temp_sensor
-                    val = read_temp_sensor()
+                    from app.services.temp_sensor import read_main_tank_temp
+                    val = read_main_tank_temp()
                     if val is not None:
                         return round(val, 2)
                 except Exception as e:
@@ -226,8 +227,8 @@ class CalibratedSensorReader:
     def get_live_temp_for_compensation(self) -> float:
         """Retrieves the live main tank DS18B20 temperature for salinity compensation."""
         try:
-            from app.api.piUtils import read_temp_sensor
-            t = read_temp_sensor()
+            from app.services.temp_sensor import read_main_tank_temp
+            t = read_main_tank_temp()
             if t is not None:
                 return round(t, 2)
         except Exception:

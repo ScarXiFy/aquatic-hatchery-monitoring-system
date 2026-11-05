@@ -227,7 +227,7 @@ class TestMixerAndHeating(unittest.TestCase):
             self.assertFalse(piUtils.mixerActive)
             self.assertFalse(piUtils.heatingSystemActive)
             self.assertFalse(piUtils.heaterActive)
-            mock_gpio.output.assert_any_call(piUtils.mixerPin, 0)
+            mock_gpio.output.assert_any_call(piUtils.mixerPin, 1)
             mock_gpio.output.assert_any_call(piUtils.heatingSystemPin, 0)
             mock_gpio.cleanup.assert_called_once()
 

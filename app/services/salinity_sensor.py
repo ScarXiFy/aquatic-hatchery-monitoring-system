@@ -60,6 +60,13 @@ class SalinitySensorService:
 
             if temp_c is None:
                 try:
+                    from app.services.temp_sensor import read_main_tank_temp
+                    temp_c = read_main_tank_temp()
+                except Exception:
+                    temp_c = None
+
+            if temp_c is None:
+                try:
                     from app.api.piUtils import read_temp_sensor
                     temp_c = read_temp_sensor()
                 except Exception:

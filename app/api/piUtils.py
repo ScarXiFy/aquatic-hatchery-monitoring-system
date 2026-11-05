@@ -572,7 +572,7 @@ if isRpiPresent:
     GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
@@ -932,7 +932,7 @@ def cleanupGpio():
         try:
             print("[RPI] Turning off heater relay and mixer...")
             GPIO.output(heatingSystemPin, GPIO.LOW)
-            GPIO.output(mixerPin, GPIO.LOW)
+            GPIO.output(mixerPin, GPIO.HIGH)
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting heater/mixer: {e}")
         try:
