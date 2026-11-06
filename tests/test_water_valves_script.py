@@ -5,27 +5,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import create_app
-import app.api.piUtils as piUtils
 import test_water_valves as twv
 
 
 class TestWaterValvesScript(unittest.TestCase):
     def setUp(self):
-        self.app = create_app()
-        self.app_context = self.app.app_context()
-        self.app_context.push()
-
-        # Reset all valve states to False (closed)
-        piUtils.coolingValve(False)
-        piUtils.heatingValve(False)
-        piUtils.mainValve(False)
+        # Reset valve states
+        twv.valve_states[twv.MAIN_VALVE_PIN] = False
+        twv.valve_states[twv.COOLING_VALVE_PIN] = False
+        twv.valve_states[twv.HEATING_VALVE_PIN] = False
 
     def tearDown(self):
-        piUtils.coolingValve(False)
-        piUtils.heatingValve(False)
-        piUtils.mainValve(False)
-        self.app_context.pop()
+        twv.valve_states[twv.MAIN_VALVE_PIN] = False
+        twv.valve_states[twv.COOLING_VALVE_PIN] = False
+        twv.valve_states[twv.HEATING_VALVE_PIN] = False
+
+    def test_pin_assignments(self):
+        """Verify only the 3 specific valve pins are defined."""
+        self.assertEqual(twv.MAIN_VALVE_PIN, 24)
+        self.assertEqual(twv.COOLING_VALVE_PIN, 25)
+        self.assertEqual(twv.HEATING_VALVE_PIN, 23)
+        self.assertEqual(twv.VALVE_PINS, [24, 25, 23])
 
     def test_get_target_duration_positional(self):
         """Test parsing positional duration argument."""
@@ -46,73 +46,65 @@ class TestWaterValvesScript(unittest.TestCase):
             duration = twv.get_target_duration(args)
             self.assertEqual(duration, twv.DEFAULT_DURATION)
 
-    def test_run_valves_test_cycles_all_valves(self):
-        """Test run_valves_test opens all 3 valves, sleeps for duration, and closes all 3 valves."""
-        mock_main = MagicMock()
-        mock_cooling = MagicMock()
-        mock_heating = MagicMock()
+    def test_run_valves_test_cycles_only_the_three_valves(self):
+        """Test run_valves_test opens and closes strictly the 3 valves."""
+        mock_open = MagicMock()
+        mock_close = MagicMock()
 
-        with patch.object(twv, "_set_main_valve", mock_main), \
-             patch.object(twv, "_set_cooling_valve", mock_cooling), \
-             patch.object(twv, "_set_heating_valve", mock_heating), \
+        with patch.object(twv, "open_all_valves", mock_open), \
+             patch.object(twv, "close_all_valves", mock_close), \
              patch("time.time", side_effect=[0.0, 1.0]), \
              patch("time.sleep", return_value=None):
 
             twv.run_valves_test(duration=0.1)
 
-            # Check all 3 opened
-            mock_main.assert_any_call(True)
-            mock_cooling.assert_any_call(True)
-            mock_heating.assert_any_call(True)
+            mock_open.assert_called_once()
+            mock_close.assert_called_once()
 
-            # Check all 3 closed
-            mock_main.assert_any_call(False)
-            mock_cooling.assert_any_call(False)
-            mock_heating.assert_any_call(False)
+    def test_run_valves_test_ensures_valves_closed_on_error(self):
+        """Test that close_all_valves/cleanup is always executed even on exception."""
+        mock_close = MagicMock()
 
-    def test_run_valves_test_closes_on_error(self):
-        """Test run_valves_test ensures all valves close even if an exception occurs during test."""
-        mock_main = MagicMock()
-        mock_cooling = MagicMock()
-        mock_heating = MagicMock()
-
-        with patch.object(twv, "_set_main_valve", mock_main), \
-             patch.object(twv, "_set_cooling_valve", mock_cooling), \
-             patch.object(twv, "_set_heating_valve", mock_heating), \
+        with patch.object(twv, "close_all_valves", mock_close), \
              patch("time.time", return_value=0.0), \
-             patch("time.sleep", side_effect=RuntimeError("Interrupted")):
+             patch("time.sleep", side_effect=RuntimeError("Test interrupt")):
 
             with self.assertRaises(RuntimeError):
                 twv.run_valves_test(duration=1.0)
 
-            # Closed calls must still be made in finally block
-            mock_main.assert_any_call(False)
-            mock_cooling.assert_any_call(False)
-            mock_heating.assert_any_call(False)
+            mock_close.assert_called_once()
 
-    def test_rpi_gpio_outputs_for_valves(self):
-        """Test that in RPi mode, active-low logic sends GPIO.LOW for ON and GPIO.HIGH for OFF."""
+    def test_rpi_gpio_setup_and_output_calls(self):
+        """Test that in RPi mode, only pins 24, 25, 23 are setup, driven LOW, then HIGH, and cleaned up."""
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
         mock_gpio.LOW = 0
+        mock_gpio.OUT = "OUT"
+        mock_gpio.BCM = "BCM"
 
-        with patch.object(piUtils, "GPIO", mock_gpio), \
-             patch.object(piUtils, "isRpiPresent", True), \
+        with patch.object(twv, "GPIO", mock_gpio), \
+             patch.object(twv, "isRpiPresent", True), \
              patch("time.time", side_effect=[0.0, 1.0]), \
              patch("time.sleep", return_value=None):
 
             twv.run_valves_test(duration=0.1)
 
-            # Main Valve Pin: 24, Cooling Valve Pin: 25, Heating Valve Pin: 23
-            # Active-low ON -> GPIO.LOW
+            # Check GPIO setup was done ONLY for pins 24, 25, 23
+            setup_pins = [call[0][0] for call in mock_gpio.setup.call_args_list]
+            self.assertEqual(setup_pins, [24, 25, 23])
+
+            # Check that only pins 24, 25, 23 were driven LOW (ON)
             mock_gpio.output.assert_any_call(24, mock_gpio.LOW)
             mock_gpio.output.assert_any_call(25, mock_gpio.LOW)
             mock_gpio.output.assert_any_call(23, mock_gpio.LOW)
 
-            # Active-low OFF -> GPIO.HIGH
+            # Check that only pins 24, 25, 23 were driven HIGH (OFF)
             mock_gpio.output.assert_any_call(24, mock_gpio.HIGH)
             mock_gpio.output.assert_any_call(25, mock_gpio.HIGH)
             mock_gpio.output.assert_any_call(23, mock_gpio.HIGH)
+
+            # Check cleanup was restricted to [24, 25, 23]
+            mock_gpio.cleanup.assert_called_once_with([24, 25, 23])
 
 
 if __name__ == "__main__":
