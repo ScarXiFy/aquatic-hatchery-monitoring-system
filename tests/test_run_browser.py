@@ -4,17 +4,21 @@ import unittest
 from unittest.mock import MagicMock, call, patch
 
 import run
+from app.socketio_events import notify_client_connected, reset_client_connected_state
 
 
 class TestRunBrowser(unittest.TestCase):
     def setUp(self):
         self.original_argv = list(sys.argv)
         self.original_env = os.environ.copy()
+        os.environ["BROWSER_CLIENT_TIMEOUT"] = "0"
+        reset_client_connected_state()
 
     def tearDown(self):
         sys.argv = list(self.original_argv)
         os.environ.clear()
         os.environ.update(self.original_env)
+        reset_client_connected_state()
 
     @patch("run.urllib.request.urlopen")
     def test_wait_for_server_success(self, mock_urlopen):
@@ -52,7 +56,7 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.sys.platform", "linux")
     @patch("run.subprocess.Popen")
     def test_open_browser_chromium_on_linux(self, mock_popen, mock_which, mock_wait):
-        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_wait.assert_called_once_with("http://localhost:5050", timeout=15)
@@ -69,7 +73,7 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.subprocess.Popen")
     def test_open_browser_kiosk_mode(self, mock_popen, mock_which, mock_wait):
         sys.argv.append("--kiosk")
-        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_popen.assert_called_once()
@@ -83,7 +87,7 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.os.geteuid", return_value=0)
     @patch("run.subprocess.Popen")
     def test_open_browser_root_adds_no_sandbox(self, mock_popen, mock_geteuid, mock_which, mock_wait):
-        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_popen.assert_called_once()
@@ -94,7 +98,7 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.shutil.which", return_value=None)
     @patch("run.webbrowser.open")
     def test_open_browser_fallback_webbrowser(self, mock_webbrowser_open, mock_which, mock_wait):
-        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_webbrowser_open.assert_called_once_with("http://localhost:5050")
@@ -127,6 +131,32 @@ class TestRunBrowser(unittest.TestCase):
             thread = run.start_browser_thread("http://localhost:5050")
             self.assertIsNone(thread)
             mock_thread_cls.assert_not_called()
+
+
+    @patch("run.wait_for_server", return_value=True)
+    @patch("run.subprocess.Popen")
+    @patch("run.webbrowser.open")
+    def test_open_browser_skips_when_existing_client_already_open(self, mock_webbrowser_open, mock_popen, mock_wait):
+        """If a tab is already open from before Ctrl+C, it should not open a new tab."""
+        notify_client_connected()
+
+        run.open_browser("http://localhost:5050")
+
+        mock_popen.assert_not_called()
+        mock_webbrowser_open.assert_not_called()
+
+    @patch("run.wait_for_server", return_value=True)
+    @patch("run.shutil.which", return_value=None)
+    @patch("run.webbrowser.open")
+    def test_open_browser_force_new_tab_flag_bypasses_existing_check(self, mock_webbrowser_open, mock_which, mock_wait):
+        """Passing --new-tab opens browser even if an existing client tab is connected."""
+        notify_client_connected()
+        sys.argv.append("--new-tab")
+
+        with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):
+            run.open_browser("http://localhost:5050")
+
+        mock_webbrowser_open.assert_called_once_with("http://localhost:5050")
 
 
 if __name__ == "__main__":

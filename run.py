@@ -9,6 +9,7 @@ import webbrowser
 
 from app import create_app, socketio
 from app.api.piUtils import cleanupGpio
+from app.socketio_events import wait_for_client_connection
 
 app = create_app()
 
@@ -26,15 +27,28 @@ def wait_for_server(url, timeout=15):
     return False
 
 
-def open_browser(url="http://localhost:5050"):
+def open_browser(url="http://localhost:5050", client_timeout=2.0):
     """
     Automatically opens the dashboard URL on the Raspberry Pi display.
     Configures environment variables (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR)
     so the browser opens properly whether executed directly from desktop,
     SSH, or a startup service.
+
+    If the website is already open in a browser tab (e.g. from before the program
+    was stopped with Ctrl+C), it reuses the open tab instead of launching a new one.
     """
     # Wait until the web server is ready to accept requests
-    wait_for_server(url, timeout=15)
+    if not wait_for_server(url, timeout=15):
+        print(f"[BROWSER] Server at {url} did not become responsive in time.")
+        return
+
+    # Check if a client tab is already open (or reconnects within client_timeout)
+    force_new = "--new-tab" in sys.argv or "--force-browser" in sys.argv
+    if not force_new:
+        timeout = float(os.environ.get("BROWSER_CLIENT_TIMEOUT", str(client_timeout)))
+        if wait_for_client_connection(timeout=timeout):
+            print(f"[BROWSER] Existing web app tab detected for {url}. Reusing already open tab.")
+            return
 
     # Set up display environment variables for GUI on the RPi display
     env = os.environ.copy()

@@ -24,7 +24,7 @@ pel2Pin = 16
 pel3Pin = 20
 pel4Pin = 21
 fan1Pin = 1
-#fan2Pin = 16
+fan2Pin = 15
 #fan3Pin = 20
 #fan4Pin = 21
 mixerPin = 5
@@ -340,6 +340,24 @@ def setDummyCoolingSystem(active: bool):
     print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
     _update_mixer_state()
     _update_main_valve_state()
+
+def setRpiCoolingSystem(active: bool):
+    global coolingSystemActive
+    coolingSystemActive = active
+    if isRpiPresent and GPIO is not None:
+        print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
+        GPIO.output(pel1Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel2Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
+        GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
+    else:
+        print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
+    _update_mixer_state()
+    _update_main_valve_state()
+
+setCoolingSystem = setDummyCoolingSystem
 
 def setDummyCoolingValve(isOpen: bool):
     global coolingValveOpen
@@ -673,7 +691,7 @@ if isRpiPresent:
     GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(pel4Pin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(fan1Pin, GPIO.OUT, initial=GPIO.LOW)
-    #GPIO.setup(fan2Pin, GPIO.OUT)
+    GPIO.setup(fan2Pin, GPIO.OUT, initial=GPIO.LOW)
     #GPIO.setup(fan3Pin, GPIO.OUT)
     #GPIO.setup(fan4Pin, GPIO.OUT)
     GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.HIGH)
@@ -728,21 +746,7 @@ if isRpiPresent:
     setMixer = setRpiMixer
     _set_heater_relay = _setRpiHeaterRelay
 
-    def setCoolingSystem(active: bool):
-        global coolingSystemActive
-        coolingSystemActive = active
-        print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
-        GPIO.output(pel1Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel2Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
-        #GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
-        #GPIO.output(fan3Pin, GPIO.LOW if active else GPIO.HIGH)
-        #GPIO.output(fan4Pin, GPIO.LOW if active else GPIO.HIGH)
-        _update_mixer_state()
-        _update_main_valve_state()
-
+    setCoolingSystem = setRpiCoolingSystem
     setCoolingValve = setRpiCoolingValve
 
     def setHeatingSystem(active: bool):
@@ -993,6 +997,7 @@ def cleanupGpio():
         _set_heater_relay(False)
         _heating_thread = None
 
+    coolingSystem(False)
     mixer(False)
     mainValve(False)
     setAeratorFan(False)
@@ -1006,6 +1011,16 @@ def cleanupGpio():
             GPIO.output(heatingValvePin, GPIO.HIGH)
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting main valve: {e}")
+        try:
+            print("[RPI] Turning off peltier cooling elements and fans...")
+            GPIO.output(pel1Pin, GPIO.HIGH)
+            GPIO.output(pel2Pin, GPIO.HIGH)
+            GPIO.output(pel3Pin, GPIO.HIGH)
+            GPIO.output(pel4Pin, GPIO.HIGH)
+            GPIO.output(fan1Pin, GPIO.HIGH)
+            GPIO.output(fan2Pin, GPIO.HIGH)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting cooling system: {e}")
         try:
             print("[RPI] Turning off aerator cooler fan...")
             GPIO.output(aeratorFanPin, GPIO.LOW)

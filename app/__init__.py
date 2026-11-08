@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, request
 from flask_socketio import SocketIO
 
 from app.config import Config
@@ -23,8 +23,18 @@ def create_app(config_class=Config):
     socketio.init_app(app)
 
     with app.app_context():
-        from app.socketio_events import register_socketio_events
+        from app.socketio_events import register_socketio_events, notify_client_connected
 
         register_socketio_events(socketio)
+
+    @app.before_request
+    def check_active_browser_client():
+        if request.environ.get("werkzeug.test"):
+            return
+        user_agent = request.headers.get("User-Agent", "").lower()
+        if "python-urllib" in user_agent:
+            return
+        if "mozilla" in user_agent or request.path.startswith("/socket.io"):
+            notify_client_connected()
 
     return app

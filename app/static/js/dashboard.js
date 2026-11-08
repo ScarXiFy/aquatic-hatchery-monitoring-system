@@ -1002,7 +1002,15 @@
       return;
     }
 
-    const socket = window.hatcherySocket || io();
+    const socket =
+      window.hatcherySocket ||
+      io({
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 500,
+        reconnectionDelayMax: 1500,
+        randomizationFactor: 0.1,
+      });
     window.hatcherySocket = socket;
     if (socketBound) {
       return;
@@ -1014,6 +1022,8 @@
       if (hasSocketConnected && !isEditingThresholds()) {
         loadThresholds();
       }
+      loadControls();
+      loadLatestReading();
       hasSocketConnected = true;
     });
     socket.on("disconnect", () => updateSocketStatus(false));
