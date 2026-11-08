@@ -10,7 +10,7 @@ HEATER_CHECK_INTERVAL = 30.0      # Wait time in seconds between heating checks/
 MIXER_SHUTDOWN_DELAY = 10.0       # Run-on time in seconds for mixer after cooling/heating stops
 
 # TEMPORARY PIN PLACEMENTS
-sourceValvePin = 6
+sourceValvePin = 8
 #drainValvePin = 5
 
 # Temperature control pins
