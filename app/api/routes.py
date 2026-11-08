@@ -20,7 +20,7 @@ api_bp = Blueprint("api", __name__)
 
 CONTROL_STATE = {
     "valves": {
-        "source": True,
+        "source": False,
         "drain": False,
         "main": False,
     },

@@ -33,7 +33,9 @@ class TestMainValve(unittest.TestCase):
         piUtils.coolingSystemActive = False
         piUtils.heatingSystemActive = False
         piUtils.mainValveOpen = False
+        piUtils.sourceValveOpen = False
         CONTROL_STATE["valves"]["main"] = False
+        CONTROL_STATE["valves"]["source"] = False
 
     def tearDown(self):
         piUtils.coolingSystem(False)
@@ -248,6 +250,20 @@ class TestMainValve(unittest.TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(piUtils.mainValveOpen)
         self.assertFalse(CONTROL_STATE["valves"]["main"])
+
+    def test_api_route_controls_source_valve(self):
+        """Test POST /api/controls/valves/source endpoint opens and closes source valve."""
+        # Open source valve via API
+        response = self.client.post("/api/controls/valves/source", json={"open": True})
+        self.assertEqual(response.status_code, 204)
+        self.assertTrue(piUtils.sourceValveOpen)
+        self.assertTrue(CONTROL_STATE["valves"]["source"])
+
+        # Close source valve via API
+        response = self.client.post("/api/controls/valves/source", json={"open": False})
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(piUtils.sourceValveOpen)
+        self.assertFalse(CONTROL_STATE["valves"]["source"])
 
 
 if __name__ == "__main__":
