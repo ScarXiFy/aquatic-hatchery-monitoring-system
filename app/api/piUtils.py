@@ -5,8 +5,8 @@ import logging
 import threading
 
 # Timing configuration for heating and mixing control
-HEATER_PULSE_DURATION = 5.0       # Duration in seconds the heater stays ON per pulse
-HEATER_CHECK_INTERVAL = 45.0      # Wait time in seconds between heating checks/pulses
+HEATER_PULSE_DURATION = 10.0       # Duration in seconds the heater stays ON per pulse
+HEATER_CHECK_INTERVAL = 30.0      # Wait time in seconds between heating checks/pulses
 MIXER_SHUTDOWN_DELAY = 10.0       # Run-on time in seconds for mixer after cooling/heating stops
 
 # TEMPORARY PIN PLACEMENTS
