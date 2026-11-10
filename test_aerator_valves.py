@@ -8,9 +8,9 @@ Tests strictly the 4 aerator components:
   3. Aerator Solenoid Valve 3 : GPIO 11
   4. Aerator Fan              : GPIO 14
 
-Logic:
-  - Solenoids : Active HIGH (GPIO.HIGH = OPEN/ON, GPIO.LOW = CLOSED/OFF)
-  - Cooler Fan: Active HIGH (GPIO.HIGH = ON, GPIO.LOW = OFF)
+Logic (Active-Low Relay):
+  - Solenoids : Active LOW (GPIO.LOW = OPEN/ON, GPIO.HIGH = CLOSED/OFF)
+  - Cooler Fan: Active LOW (GPIO.LOW = ON, GPIO.HIGH = OFF)
   - Fan Rule  : Fan is ON whenever at least ONE solenoid is ON; OFF when all 3 are OFF.
 
 Test Progression:
@@ -62,18 +62,18 @@ fan_state = False
 
 
 def setup_gpio():
-    """Initializes strictly the 4 pins to outputs, defaulting to OFF (LOW)."""
+    """Initializes strictly the 4 pins to outputs, defaulting to OFF/CLOSED (HIGH)."""
     if isRpiPresent and GPIO is not None:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
         for pin in ALL_PINS:
-            GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+            GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
 
 
-def _set_pin(pin: int, is_high: bool):
-    """Sets a pin state on hardware if present."""
+def _set_pin(pin: int, is_active: bool):
+    """Sets a pin state on hardware if present (active-LOW: LOW=ON, HIGH=OFF)."""
     if isRpiPresent and GPIO is not None:
-        GPIO.output(pin, GPIO.HIGH if is_high else GPIO.LOW)
+        GPIO.output(pin, GPIO.LOW if is_active else GPIO.HIGH)
 
 
 def update_fan():

@@ -412,7 +412,7 @@ def setRpiAeratorFan(active: bool):
     aeratorCoolerFanActive = active
     if isRpiPresent and GPIO is not None:
         print(f"[RPI] aerator cooler fan -> {'ON' if active else 'OFF'}")
-        GPIO.output(aeratorFanPin, GPIO.HIGH if active else GPIO.LOW)
+        GPIO.output(aeratorFanPin, GPIO.LOW if active else GPIO.HIGH)
     else:
         print(f"[DUMMY] aerator cooler fan -> {'ON' if active else 'OFF'}")
 
@@ -457,21 +457,21 @@ def setRpiDoSolenoidValve(isOpen: bool):
         print(f"[RPI] DO solenoid valve -> {isOpen}")
         print(f"[RPI] DO solenoid valves open: {_dosvcounter}/3")
         if _dosvcounter == 3:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
-        elif _dosvcounter == 2:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 1:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 0:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
             GPIO.output(doSolenoidValve3, GPIO.LOW)
+        elif _dosvcounter == 2:
+            GPIO.output(doSolenoidValve1, GPIO.LOW)
+            GPIO.output(doSolenoidValve2, GPIO.LOW)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
+        elif _dosvcounter == 1:
+            GPIO.output(doSolenoidValve1, GPIO.LOW)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
+        elif _dosvcounter == 0:
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
     else:
         print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
 
@@ -491,21 +491,21 @@ def setDoSolenoidValveCount(count: int):
     doSolenoidValveOpen = (_dosvcounter > 0)
     if isRpiPresent and GPIO is not None:
         if _dosvcounter == 3:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
-        elif _dosvcounter == 2:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 1:
-            GPIO.output(doSolenoidValve1, GPIO.HIGH)
-            GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 0:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
             GPIO.output(doSolenoidValve3, GPIO.LOW)
+        elif _dosvcounter == 2:
+            GPIO.output(doSolenoidValve1, GPIO.LOW)
+            GPIO.output(doSolenoidValve2, GPIO.LOW)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
+        elif _dosvcounter == 1:
+            GPIO.output(doSolenoidValve1, GPIO.LOW)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
+        elif _dosvcounter == 0:
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
     else:
         print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
     _update_aerator_fan_state()
@@ -709,10 +709,10 @@ if isRpiPresent:
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
     GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.HIGH)
     GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(aeratorFanPin, GPIO.OUT, initial=GPIO.HIGH if _dosvcounter > 0 else GPIO.LOW)
+    GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 1 else GPIO.HIGH)
+    GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 2 else GPIO.HIGH)
+    GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 3 else GPIO.HIGH)
+    GPIO.setup(aeratorFanPin, GPIO.OUT, initial=GPIO.LOW if _dosvcounter > 0 else GPIO.HIGH)
     # Initialize LED PWM via pigpio DMA PWM
     if isPigpioPresent and pigpio is not None:
         try:
@@ -1034,9 +1034,13 @@ def cleanupGpio():
             logging.warning(f"[RPI] Exception while resetting cooling system: {e}")
         try:
             print("[RPI] Turning off aerator cooler fan...")
-            GPIO.output(aeratorFanPin, GPIO.LOW)
+            GPIO.output(aeratorFanPin, GPIO.HIGH)
+            print("[RPI] Closing aerator solenoid valves...")
+            GPIO.output(doSolenoidValve1, GPIO.HIGH)
+            GPIO.output(doSolenoidValve2, GPIO.HIGH)
+            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         except Exception as e:
-            logging.warning(f"[RPI] Exception while resetting aerator fan: {e}")
+            logging.warning(f"[RPI] Exception while resetting aerator fan and valves: {e}")
         try:
             print("[RPI] Turning off heater relay and mixer...")
             GPIO.output(heatingSystemPin, GPIO.LOW)

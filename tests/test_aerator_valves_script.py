@@ -84,17 +84,17 @@ class TestAeratorValvesScript(unittest.TestCase):
             setup_pins = [call[0][0] for call in mock_gpio.setup.call_args_list]
             self.assertEqual(setup_pins, [10, 9, 11, 14])
 
-            # Solenoids and fan driven HIGH when active
-            mock_gpio.output.assert_any_call(10, mock_gpio.HIGH)
-            mock_gpio.output.assert_any_call(9, mock_gpio.HIGH)
-            mock_gpio.output.assert_any_call(11, mock_gpio.HIGH)
-            mock_gpio.output.assert_any_call(14, mock_gpio.HIGH)
-
-            # Solenoids and fan driven LOW on turn off
+            # Solenoids and fan driven LOW when active (Active-LOW relay logic)
             mock_gpio.output.assert_any_call(10, mock_gpio.LOW)
             mock_gpio.output.assert_any_call(9, mock_gpio.LOW)
             mock_gpio.output.assert_any_call(11, mock_gpio.LOW)
             mock_gpio.output.assert_any_call(14, mock_gpio.LOW)
+
+            # Solenoids and fan driven HIGH on turn off
+            mock_gpio.output.assert_any_call(10, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(9, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(11, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(14, mock_gpio.HIGH)
 
             # Cleanup strictly on the 4 pins
             mock_gpio.cleanup.assert_called_once_with([10, 9, 11, 14])

@@ -99,34 +99,94 @@ class TestAeratorCoolerFan(unittest.TestCase):
         self.assertFalse(piUtils.aeratorFanActive)
 
     def test_rpi_aerator_fan_gpio_control(self):
-        """Test RPi GPIO output for aerator fan on GPIO 14."""
+        """Test RPi GPIO output for aerator fan on GPIO 14 (Active-LOW: LOW=ON, HIGH=OFF)."""
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
         mock_gpio.LOW = 0
 
-        with patch.object(piUtils, "GPIO", mock_gpio), patch.object(piUtils, "isRpiPresent", True):
-            # Start with 0 valves
+        with patch.object(piUtils, "GPIO", mock_gpio), \
+             patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "doSolenoidValve", piUtils.setRpiDoSolenoidValve):
+            # Start with 0 valves -> fan OFF (HIGH)
             piUtils.setDoSolenoidValveCount(0)
-            mock_gpio.output.assert_called_with(14, mock_gpio.LOW)
+            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
             self.assertFalse(piUtils.aeratorFanActive)
 
-            # Open 1 valve -> GPIO 14 set HIGH
+            # Open 1 valve -> GPIO 14 set LOW (ON)
             piUtils.setDoSolenoidValveCount(1)
-            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
-            self.assertTrue(piUtils.aeratorFanActive)
-
-            # Open 3 valves -> GPIO 14 remains HIGH
-            piUtils.setDoSolenoidValveCount(3)
-            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
-            self.assertTrue(piUtils.aeratorFanActive)
-
-            # Close all valves -> GPIO 14 set LOW
-            piUtils.setDoSolenoidValveCount(0)
             mock_gpio.output.assert_called_with(14, mock_gpio.LOW)
+            self.assertTrue(piUtils.aeratorFanActive)
+
+            # Open 3 valves -> GPIO 14 remains LOW (ON)
+            piUtils.setDoSolenoidValveCount(3)
+            mock_gpio.output.assert_called_with(14, mock_gpio.LOW)
+            self.assertTrue(piUtils.aeratorFanActive)
+
+            # Close all valves -> GPIO 14 set HIGH (OFF)
+            piUtils.setDoSolenoidValveCount(0)
+            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
             self.assertFalse(piUtils.aeratorFanActive)
+
+    def test_rpi_do_solenoid_valves_gpio_control(self):
+        """Test RPi GPIO output for DO solenoid valves (Active-LOW: LOW=OPEN, HIGH=CLOSED)."""
+        mock_gpio = MagicMock()
+        mock_gpio.HIGH = 1
+        mock_gpio.LOW = 0
+
+        with patch.object(piUtils, "GPIO", mock_gpio), \
+             patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "doSolenoidValve", piUtils.setRpiDoSolenoidValve):
+            # Count 0: all closed (HIGH, HIGH, HIGH)
+            piUtils.setDoSolenoidValveCount(0)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
+
+            # Count 1: 1 open, 2 closed (LOW, HIGH, HIGH)
+            mock_gpio.reset_mock()
+            piUtils.setDoSolenoidValveCount(1)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
+
+            # Count 2: 2 open, 1 closed (LOW, LOW, HIGH)
+            mock_gpio.reset_mock()
+            piUtils.setDoSolenoidValveCount(2)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
+
+            # Count 3: all 3 open (LOW, LOW, LOW)
+            mock_gpio.reset_mock()
+            piUtils.setDoSolenoidValveCount(3)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.LOW)
+
+            # Stepping down (closing one by one):
+            mock_gpio.reset_mock()
+            piUtils.doSolenoidValve(False)  # 3 -> 2
+            self.assertEqual(piUtils._dosvcounter, 2)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
+
+            mock_gpio.reset_mock()
+            piUtils.doSolenoidValve(False)  # 2 -> 1
+            self.assertEqual(piUtils._dosvcounter, 1)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
+
+            mock_gpio.reset_mock()
+            piUtils.doSolenoidValve(False)  # 1 -> 0
+            self.assertEqual(piUtils._dosvcounter, 0)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve1, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve2, mock_gpio.HIGH)
+            mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
 
     def test_cleanup_disables_aerator_fan(self):
-        """Test cleanupGpio turns off aerator fan on GPIO 14."""
+        """Test cleanupGpio turns off aerator fan on GPIO 14 (Active-LOW: HIGH=OFF)."""
         piUtils.setDoSolenoidValveCount(2)
         self.assertTrue(piUtils.aeratorFanActive)
 
@@ -134,10 +194,12 @@ class TestAeratorCoolerFan(unittest.TestCase):
         mock_gpio.HIGH = 1
         mock_gpio.LOW = 0
 
-        with patch.object(piUtils, "GPIO", mock_gpio), patch.object(piUtils, "isRpiPresent", True):
+        with patch.object(piUtils, "GPIO", mock_gpio), \
+             patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "doSolenoidValve", piUtils.setRpiDoSolenoidValve):
             piUtils.cleanupGpio()
             self.assertFalse(piUtils.aeratorFanActive)
-            mock_gpio.output.assert_any_call(14, mock_gpio.LOW)
+            mock_gpio.output.assert_any_call(14, mock_gpio.HIGH)
 
 
 if __name__ == "__main__":
