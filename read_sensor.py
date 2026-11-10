@@ -121,6 +121,7 @@ class CalibratedSensorReader:
         db_path: Path = DEFAULT_DB_FILE,
         interval: int = DEFAULT_INTERVAL_SECONDS,
         channel: int | None = None,
+        device_id: str | None = None,
         notes: str | None = None,
         simulate: bool = False,
         reset: bool = False,
@@ -130,6 +131,8 @@ class CalibratedSensorReader:
         self.db_path = Path(db_path)
         self.interval = interval
         self.channel = channel if channel is not None else self.meta.get("default_channel", 0)
+        self.device_id = device_id
+        self.device_file = None
         self.notes = notes
         self.simulate = simulate
         self.reset = reset
@@ -194,27 +197,49 @@ class CalibratedSensorReader:
                 from app.services.temp_sensor import (
                     MAIN_TANK_DEVICE_FILE,
                     MIXING_TANK_DEVICE_FILE,
+                    discover_w1_sensors,
+                    ensure_w1_kernel_modules,
                     is_w1_sensor_available,
-                    read_main_tank_temp,
-                    read_mixing_tank_temp,
+                    resolve_main_tank_device_file,
+                    resolve_mixing_tank_device_file,
                 )
-                if self.sensor_key == "mixing_temp":
-                    dev_file = MIXING_TANK_DEVICE_FILE
-                    read_fn = read_mixing_tank_temp
-                    name = "Mixing Tank DS18B20"
-                else:
-                    dev_file = MAIN_TANK_DEVICE_FILE
-                    read_fn = read_main_tank_temp
-                    name = "Main Tank DS18B20"
 
-                if is_w1_sensor_available(dev_file):
-                    temp_val = read_fn()
-                    if temp_val is not None:
-                        self.is_hardware_available = True
-                        print(f"[HARDWARE] {name} Temperature sensor detected.")
-                        return
+                ensure_w1_kernel_modules()
+                detected_devices = discover_w1_sensors()
+
+                if self.sensor_key == "mixing_temp":
+                    name = "Mixing Tank DS18B20"
+                    expected_default = MIXING_TANK_DEVICE_FILE
+                    target_file = resolve_mixing_tank_device_file(self.device_id)
+                else:
+                    name = "Main Tank DS18B20"
+                    expected_default = MAIN_TANK_DEVICE_FILE
+                    target_file = resolve_main_tank_device_file(self.device_id)
+
+                self.device_file = target_file
+
+                if target_file and is_w1_sensor_available(target_file):
+                    self.is_hardware_available = True
+                    discovered_note = ""
+                    if self.device_id:
+                        discovered_note = f" (specified: {self.device_id})"
+                    elif target_file != expected_default:
+                        discovered_note = f" (auto-discovered on 1-Wire bus: {target_file.parent.name})"
+                    else:
+                        discovered_note = f" ({target_file.parent.name})"
+
+                    print(f"[HARDWARE] {name} Temperature sensor detected{discovered_note}.")
+                    return
+
                 self.is_hardware_available = False
-                print(f"[WARNING] {name} not detected. Falling back to simulated readings.")
+                print(f"[WARNING] {name} sensor file not found: {target_file}")
+                if detected_devices:
+                    print(f"[INFO] 1-Wire devices currently online on bus: {', '.join(detected_devices)}")
+                    print(f"[TIP] To bind directly to one of these, use: --device-id {detected_devices[0]}")
+                else:
+                    print("[WARNING] No 1-Wire devices detected under /sys/bus/w1/devices/.")
+                    print("[TIP] Ensure 1-Wire is enabled (`sudo raspi-config` -> Interfaces -> 1-Wire) and check the 4.7kΩ pull-up resistor on GPIO 4.")
+                print(f"[WARNING] Falling back to simulated {name} readings.")
             except Exception as e:
                 self.is_hardware_available = False
                 print(f"[WARNING] Temperature sensor init failed ({e}). Falling back to simulation.")
@@ -237,16 +262,13 @@ class CalibratedSensorReader:
     def read_live_raw(self) -> float:
         """Reads raw voltage from ADC, or temperature from DS18B20."""
         if self.sensor_key in ("temp", "mixing_temp"):
-            if self.is_hardware_available:
+            if self.is_hardware_available and getattr(self, "device_file", None):
                 try:
-                    if self.sensor_key == "mixing_temp":
-                        from app.services.temp_sensor import read_mixing_tank_temp
-                        val = read_mixing_tank_temp()
-                    else:
-                        from app.services.temp_sensor import read_main_tank_temp
-                        val = read_main_tank_temp()
+                    from app.services.temp_sensor import read_ds18b20
+                    val = read_ds18b20(self.device_file)
                     if val is not None:
                         return round(val, 2)
+                    print(f"[WARNING] Transient read/CRC retry timeout on {self.device_file.parent.name}; retrying...")
                 except Exception as e:
                     print(f"[ERROR] Failed reading temperature sensor: {e}")
             sim_low, sim_high = self.meta["sim_range"]
@@ -436,7 +458,11 @@ class CalibratedSensorReader:
         print(f"          CALIBRATED {self.meta['name'].upper()} MONITOR")
         print("=" * 75)
         print(f"Sensor        : {self.meta['name']} (Key: {self.sensor_key})")
-        if self.sensor_key not in ("temp", "mixing_temp"):
+        if self.sensor_key in ("temp", "mixing_temp"):
+            dev_str = getattr(self, "device_file", None)
+            dev_name = dev_str.parent.name if dev_str else "N/A"
+            print(f"1-Wire Device : {dev_name}")
+        else:
             print(f"ADC Channel   : AIN{self.channel}")
             if self.sensor_key == "ph":
                 print(f"Calibration   : y = {self.meta['slope']} * V + {self.meta['offset']}")
@@ -563,16 +589,50 @@ def export_csv(db_path: Path, output_file: Path, sensor: str | None = None):
 
 def interactive_select_sensor() -> str:
     """Prompts the user to interactively choose a sensor to monitor."""
-    print("\n" + "=" * 50)
+    detected = []
+    main_status = ""
+    mixing_status = ""
+    try:
+        from app.services.temp_sensor import (
+            MAIN_TANK_DEVICE_FILE,
+            MIXING_TANK_DEVICE_FILE,
+            discover_w1_sensors,
+            ensure_w1_kernel_modules,
+        )
+        ensure_w1_kernel_modules()
+        detected = discover_w1_sensors()
+        if MAIN_TANK_DEVICE_FILE.exists():
+            main_status = f" [ONLINE: {MAIN_TANK_DEVICE_FILE.parent.name}]"
+        elif detected:
+            main_status = f" [DETECTED BUS SENSOR: {detected[0]}]"
+        else:
+            main_status = " [CONFIGURED]"
+
+        if MIXING_TANK_DEVICE_FILE.exists():
+            mixing_status = f" [ONLINE: {MIXING_TANK_DEVICE_FILE.parent.name}]"
+        else:
+            mix_cand = [d for d in detected if d != MAIN_TANK_DEVICE_FILE.parent.name]
+            if mix_cand:
+                mixing_status = f" [AUTO-RESOLVE: {mix_cand[0]}]"
+            elif detected:
+                mixing_status = f" [AUTO-RESOLVE: {detected[0]}]"
+            else:
+                mixing_status = " [CONFIGURED]"
+    except Exception:
+        pass
+
+    print("\n" + "=" * 65)
     print("       AQUATIC HATCHERY SENSOR MONITOR")
-    print("=" * 50)
+    print("=" * 65)
     print("Select a sensor to monitor:")
     print("  1) pH Sensor (Channel 0)")
     print("  2) Dissolved Oxygen [DO] (Channel 2)")
     print("  3) Salinity / EC (Channel 1, Temp Compensated)")
-    print("  4) Temperature (Main Tank DS18B20)")
-    print("  5) Temperature (Mixing Tank DS18B20)")
-    print("=" * 50)
+    print(f"  4) Temperature (Main Tank DS18B20){main_status}")
+    print(f"  5) Temperature (Mixing Tank DS18B20){mixing_status}")
+    if detected:
+        print(f"  --> 1-Wire device(s) online: {', '.join(detected)}")
+    print("=" * 65)
     while True:
         try:
             choice = input("Enter choice [1-5 or name] (default: 1): ").strip()
@@ -596,6 +656,13 @@ def main():
         type=str,
         default=None,
         help="Sensor to read: 'ph', 'do', 'salinity', 'temp', or 'mixing_temp' (if omitted, prompts interactively)",
+    )
+    parser.add_argument(
+        "--device-id",
+        "-d",
+        type=str,
+        default=None,
+        help="Optional 1-Wire DS18B20 device ID (e.g., '28-000000b260f4') override for temperature monitoring",
     )
     parser.add_argument(
         "--interval",
@@ -662,6 +729,7 @@ def main():
         db_path=args.db,
         interval=args.interval,
         channel=args.channel,
+        device_id=args.device_id,
         notes=args.notes,
         simulate=args.simulate,
         reset=args.reset,

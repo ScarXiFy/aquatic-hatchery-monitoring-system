@@ -136,7 +136,7 @@ class TestCalibratedSensorReader(unittest.TestCase):
         self.assertEqual(reader.meta["name"], "Mixing Tank Temperature (DS18B20)")
         reader.close()
 
-    @patch("app.services.temp_sensor.read_mixing_tank_temp")
+    @patch("app.services.temp_sensor.read_ds18b20")
     @patch("app.services.temp_sensor.is_w1_sensor_available")
     def test_mixing_temp_hardware_read(self, mock_available, mock_read):
         mock_available.return_value = True
@@ -152,6 +152,39 @@ class TestCalibratedSensorReader(unittest.TestCase):
         cal_val, t_comp = reader.calculate_calibrated_value(raw_val)
         self.assertEqual(cal_val, 27.80)
         self.assertIsNone(t_comp)
+        reader.close()
+
+    @patch("app.services.temp_sensor.discover_w1_sensors")
+    @patch("app.services.temp_sensor.is_w1_sensor_available")
+    @patch("app.services.temp_sensor.read_ds18b20")
+    def test_mixing_temp_autodiscover(self, mock_read, mock_available, mock_discover):
+        mock_discover.return_value = ["28-000000b197bd", "28-012033445566"]
+        mock_available.return_value = True
+        mock_read.return_value = 29.10
+        reader = CalibratedSensorReader(
+            sensor_key="mixing_temp",
+            db_path=self.db_path,
+            simulate=False,
+        )
+        self.assertTrue(reader.is_hardware_available)
+        self.assertEqual(reader.device_file.parent.name, "28-012033445566")
+        self.assertEqual(reader.read_live_raw(), 29.10)
+        reader.close()
+
+    @patch("app.services.temp_sensor.is_w1_sensor_available")
+    @patch("app.services.temp_sensor.read_ds18b20")
+    def test_mixing_temp_custom_device_id(self, mock_read, mock_available):
+        mock_available.return_value = True
+        mock_read.return_value = 24.50
+        reader = CalibratedSensorReader(
+            sensor_key="mixing_temp",
+            device_id="28-999999999999",
+            db_path=self.db_path,
+            simulate=False,
+        )
+        self.assertTrue(reader.is_hardware_available)
+        self.assertEqual(reader.device_file.parent.name, "28-999999999999")
+        self.assertEqual(reader.read_live_raw(), 24.50)
         reader.close()
 
     def test_db_recording_and_reset(self):

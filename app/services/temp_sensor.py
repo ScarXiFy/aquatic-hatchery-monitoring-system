@@ -19,8 +19,81 @@ MAIN_TANK_DEVICE_FILE = W1_BASE_DIR / MAIN_TANK_DEVICE_ID / "w1_slave"
 MIXING_TANK_DEVICE_FILE = W1_BASE_DIR / MIXING_TANK_DEVICE_ID / "w1_slave"
 
 
+def ensure_w1_kernel_modules():
+    """Attempts to load 1-Wire kernel drivers on Linux/RPi if running on hardware."""
+    if os.name == "posix" and os.path.exists("/sys/bus"):
+        try:
+            os.system("modprobe w1-gpio 2>/dev/null")
+            os.system("modprobe w1-therm 2>/dev/null")
+        except Exception:
+            pass
+
+
+def discover_w1_sensors() -> list[str]:
+    """Scans for available 1-Wire DS18B20 devices on the system."""
+    ensure_w1_kernel_modules()
+    if not W1_BASE_DIR.exists():
+        return []
+    devices = []
+    for p in W1_BASE_DIR.glob("28-*"):
+        if (p / "w1_slave").exists():
+            devices.append(p.name)
+    return sorted(devices)
+
+
+def resolve_main_tank_device_file(custom_device_id: str | None = None) -> Path:
+    """
+    Resolves the main tank DS18B20 w1_slave file path.
+    1. If custom_device_id is provided, uses that.
+    2. If MAIN_TANK_DEVICE_FILE exists, returns that.
+    3. Auto-discovers any connected 28-* device not assigned to mixing tank.
+    4. If only 1 device is found, returns that.
+    5. Fallback: MAIN_TANK_DEVICE_FILE.
+    """
+    if custom_device_id:
+        return W1_BASE_DIR / custom_device_id / "w1_slave"
+
+    if MAIN_TANK_DEVICE_FILE.exists():
+        return MAIN_TANK_DEVICE_FILE
+
+    devices = discover_w1_sensors()
+    other_devices = [d for d in devices if d != MIXING_TANK_DEVICE_ID]
+    if other_devices:
+        return W1_BASE_DIR / other_devices[0] / "w1_slave"
+    if devices:
+        return W1_BASE_DIR / devices[0] / "w1_slave"
+
+    return MAIN_TANK_DEVICE_FILE
+
+
+def resolve_mixing_tank_device_file(custom_device_id: str | None = None) -> Path:
+    """
+    Resolves the mixing tank DS18B20 w1_slave file path.
+    1. If custom_device_id is provided, uses that.
+    2. If MIXING_TANK_DEVICE_FILE exists, returns that.
+    3. Auto-discovers any connected 28-* device not assigned to main tank.
+    4. If only 1 device is found, returns that.
+    5. Fallback: MIXING_TANK_DEVICE_FILE.
+    """
+    if custom_device_id:
+        return W1_BASE_DIR / custom_device_id / "w1_slave"
+
+    if MIXING_TANK_DEVICE_FILE.exists():
+        return MIXING_TANK_DEVICE_FILE
+
+    devices = discover_w1_sensors()
+    other_devices = [d for d in devices if d != MAIN_TANK_DEVICE_ID]
+    if other_devices:
+        return W1_BASE_DIR / other_devices[0] / "w1_slave"
+    if devices:
+        return W1_BASE_DIR / devices[0] / "w1_slave"
+
+    return MIXING_TANK_DEVICE_FILE
+
+
 def is_w1_sensor_available(device_file: Path | str = MAIN_TANK_DEVICE_FILE) -> bool:
     """Checks whether the specified 1-Wire w1_slave file is present."""
+    ensure_w1_kernel_modules()
     return Path(device_file).exists()
 
 
@@ -72,17 +145,31 @@ def read_ds18b20(device_file: Path | str, retries: int = 5, retry_delay: float =
     return None
 
 
-def read_main_tank_temp() -> float | None:
+def read_main_tank_temp(device_file: Path | str | None = None, device_id: str | None = None) -> float | None:
     """
-    Reads the temperature (°C) of the Main Tank DS18B20 sensor (28-000000b197bd).
-    Returns float or None if hardware is unavailable.
+    Reads the temperature (°C) of the Main Tank DS18B20 sensor.
+    Supports overriding device file or ID, with auto-discovery fallback.
     """
-    return read_ds18b20(MAIN_TANK_DEVICE_FILE)
+    if device_file is not None:
+        target_file = Path(device_file)
+    elif device_id is not None:
+        target_file = W1_BASE_DIR / device_id / "w1_slave"
+    else:
+        target_file = resolve_main_tank_device_file()
+
+    return read_ds18b20(target_file)
 
 
-def read_mixing_tank_temp() -> float | None:
+def read_mixing_tank_temp(device_file: Path | str | None = None, device_id: str | None = None) -> float | None:
     """
-    Reads the temperature (°C) of the Mixing Tank DS18B20 sensor (28-000000b260f4).
-    Returns float or None if hardware is unavailable.
+    Reads the temperature (°C) of the Mixing Tank DS18B20 sensor.
+    Supports overriding device file or ID, with auto-discovery fallback.
     """
-    return read_ds18b20(MIXING_TANK_DEVICE_FILE)
+    if device_file is not None:
+        target_file = Path(device_file)
+    elif device_id is not None:
+        target_file = W1_BASE_DIR / device_id / "w1_slave"
+    else:
+        target_file = resolve_mixing_tank_device_file()
+
+    return read_ds18b20(target_file)
