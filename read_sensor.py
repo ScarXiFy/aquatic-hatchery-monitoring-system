@@ -38,6 +38,30 @@ if str(BASE_DIR) not in sys.path:
 DEFAULT_DB_FILE = BASE_DIR / "calibrated_sensors.db"
 DEFAULT_INTERVAL_SECONDS = 5
 
+
+def get_temp_sensor_service():
+    """
+    Safely retrieves the DS18B20 temp_sensor service module.
+    Works seamlessly whether Flask is installed in the active environment
+    or running standalone from a basic Python environment.
+    """
+    try:
+        from app.services import temp_sensor
+        return temp_sensor
+    except Exception:
+        import importlib.util
+        temp_sensor_path = BASE_DIR / "app" / "services" / "temp_sensor.py"
+        if temp_sensor_path.exists():
+            try:
+                spec = importlib.util.spec_from_file_location("standalone_temp_sensor", str(temp_sensor_path))
+                if spec and spec.loader:
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    return mod
+            except Exception:
+                pass
+    return None
+
 SENSOR_METADATA = {
     "ph": {
         "name": "pH Sensor",
@@ -193,32 +217,28 @@ class CalibratedSensorReader:
             return
 
         if self.sensor_key in ("temp", "mixing_temp"):
-            try:
-                from app.services.temp_sensor import (
-                    MAIN_TANK_DEVICE_FILE,
-                    MIXING_TANK_DEVICE_FILE,
-                    discover_w1_sensors,
-                    ensure_w1_kernel_modules,
-                    is_w1_sensor_available,
-                    resolve_main_tank_device_file,
-                    resolve_mixing_tank_device_file,
-                )
+            ts = get_temp_sensor_service()
+            if not ts:
+                self.is_hardware_available = False
+                print("[WARNING] Could not load temp_sensor service. Falling back to simulation.")
+                return
 
-                ensure_w1_kernel_modules()
-                detected_devices = discover_w1_sensors()
+            try:
+                ts.ensure_w1_kernel_modules()
+                detected_devices = ts.discover_w1_sensors()
 
                 if self.sensor_key == "mixing_temp":
                     name = "Mixing Tank DS18B20"
-                    expected_default = MIXING_TANK_DEVICE_FILE
-                    target_file = resolve_mixing_tank_device_file(self.device_id)
+                    expected_default = ts.MIXING_TANK_DEVICE_FILE
+                    target_file = ts.resolve_mixing_tank_device_file(self.device_id)
                 else:
                     name = "Main Tank DS18B20"
-                    expected_default = MAIN_TANK_DEVICE_FILE
-                    target_file = resolve_main_tank_device_file(self.device_id)
+                    expected_default = ts.MAIN_TANK_DEVICE_FILE
+                    target_file = ts.resolve_main_tank_device_file(self.device_id)
 
                 self.device_file = target_file
 
-                if target_file and is_w1_sensor_available(target_file):
+                if target_file and ts.is_w1_sensor_available(target_file):
                     self.is_hardware_available = True
                     discovered_note = ""
                     if self.device_id:
@@ -264,11 +284,12 @@ class CalibratedSensorReader:
         if self.sensor_key in ("temp", "mixing_temp"):
             if self.is_hardware_available and getattr(self, "device_file", None):
                 try:
-                    from app.services.temp_sensor import read_ds18b20
-                    val = read_ds18b20(self.device_file)
-                    if val is not None:
-                        return round(val, 2)
-                    print(f"[WARNING] Transient read/CRC retry timeout on {self.device_file.parent.name}; retrying...")
+                    ts = get_temp_sensor_service()
+                    if ts and hasattr(ts, "read_ds18b20"):
+                        val = ts.read_ds18b20(self.device_file)
+                        if val is not None:
+                            return round(val, 2)
+                        print(f"[WARNING] Transient read/CRC retry timeout on {self.device_file.parent.name}; retrying...")
                 except Exception as e:
                     print(f"[ERROR] Failed reading temperature sensor: {e}")
             sim_low, sim_high = self.meta["sim_range"]
@@ -287,10 +308,11 @@ class CalibratedSensorReader:
     def get_live_temp_for_compensation(self) -> float:
         """Retrieves the live main tank DS18B20 temperature for salinity compensation."""
         try:
-            from app.services.temp_sensor import read_main_tank_temp
-            t = read_main_tank_temp()
-            if t is not None:
-                return round(t, 2)
+            ts = get_temp_sensor_service()
+            if ts and hasattr(ts, "read_main_tank_temp"):
+                t = ts.read_main_tank_temp()
+                if t is not None:
+                    return round(t, 2)
         except Exception:
             pass
         return 25.0
@@ -592,34 +614,30 @@ def interactive_select_sensor() -> str:
     detected = []
     main_status = ""
     mixing_status = ""
-    try:
-        from app.services.temp_sensor import (
-            MAIN_TANK_DEVICE_FILE,
-            MIXING_TANK_DEVICE_FILE,
-            discover_w1_sensors,
-            ensure_w1_kernel_modules,
-        )
-        ensure_w1_kernel_modules()
-        detected = discover_w1_sensors()
-        if MAIN_TANK_DEVICE_FILE.exists():
-            main_status = f" [ONLINE: {MAIN_TANK_DEVICE_FILE.parent.name}]"
-        elif detected:
-            main_status = f" [DETECTED BUS SENSOR: {detected[0]}]"
-        else:
-            main_status = " [CONFIGURED]"
-
-        if MIXING_TANK_DEVICE_FILE.exists():
-            mixing_status = f" [ONLINE: {MIXING_TANK_DEVICE_FILE.parent.name}]"
-        else:
-            mix_cand = [d for d in detected if d != MAIN_TANK_DEVICE_FILE.parent.name]
-            if mix_cand:
-                mixing_status = f" [AUTO-RESOLVE: {mix_cand[0]}]"
+    ts = get_temp_sensor_service()
+    if ts:
+        try:
+            ts.ensure_w1_kernel_modules()
+            detected = ts.discover_w1_sensors()
+            if ts.MAIN_TANK_DEVICE_FILE.exists():
+                main_status = f" [ONLINE: {ts.MAIN_TANK_DEVICE_FILE.parent.name}]"
             elif detected:
-                mixing_status = f" [AUTO-RESOLVE: {detected[0]}]"
+                main_status = f" [DETECTED BUS SENSOR: {detected[0]}]"
             else:
-                mixing_status = " [CONFIGURED]"
-    except Exception:
-        pass
+                main_status = " [CONFIGURED]"
+
+            if ts.MIXING_TANK_DEVICE_FILE.exists():
+                mixing_status = f" [ONLINE: {ts.MIXING_TANK_DEVICE_FILE.parent.name}]"
+            else:
+                mix_cand = [d for d in detected if d != ts.MAIN_TANK_DEVICE_FILE.parent.name]
+                if mix_cand:
+                    mixing_status = f" [AUTO-RESOLVE: {mix_cand[0]}]"
+                elif detected:
+                    mixing_status = f" [AUTO-RESOLVE: {detected[0]}]"
+                else:
+                    mixing_status = " [CONFIGURED]"
+        except Exception:
+            pass
 
     print("\n" + "=" * 65)
     print("       AQUATIC HATCHERY SENSOR MONITOR")

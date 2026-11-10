@@ -1,10 +1,18 @@
-from flask import Flask, request
-from flask_socketio import SocketIO
+try:
+    from flask import Flask, request
+    from flask_socketio import SocketIO
+    from app.config import Config
+    from app.database import close_db, init_db
 
-from app.config import Config
-from app.database import close_db, init_db
-
-socketio = SocketIO(cors_allowed_origins="*", async_mode="threading")
+    socketio = SocketIO(cors_allowed_origins="*", async_mode="threading")
+except ImportError:
+    Flask = None
+    request = None
+    SocketIO = None
+    socketio = None
+    Config = None
+    close_db = None
+    init_db = None
 
 
 def create_app(config_class=Config):
