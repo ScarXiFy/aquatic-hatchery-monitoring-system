@@ -37,6 +37,11 @@ class TestCalibratedSensorReader(unittest.TestCase):
         self.assertEqual(CalibratedSensorReader._normalize_sensor_key("ec"), "salinity")
         self.assertEqual(CalibratedSensorReader._normalize_sensor_key("4"), "temp")
         self.assertEqual(CalibratedSensorReader._normalize_sensor_key("temperature"), "temp")
+        self.assertEqual(CalibratedSensorReader._normalize_sensor_key("5"), "mixing_temp")
+        self.assertEqual(CalibratedSensorReader._normalize_sensor_key("mixing_temp"), "mixing_temp")
+        self.assertEqual(CalibratedSensorReader._normalize_sensor_key("temp_mixing"), "mixing_temp")
+        self.assertEqual(CalibratedSensorReader._normalize_sensor_key("mixing"), "mixing_temp")
+        self.assertEqual(CalibratedSensorReader._normalize_sensor_key("mixing_tank_temp"), "mixing_temp")
 
         with self.assertRaises(ValueError):
             CalibratedSensorReader._normalize_sensor_key("invalid_sensor")
@@ -117,6 +122,36 @@ class TestCalibratedSensorReader(unittest.TestCase):
         val, t = reader.calculate_calibrated_value(26.45)
         self.assertEqual(val, 26.45)
         self.assertIsNone(t)
+        reader.close()
+
+    def test_mixing_temp_sensor_reading(self):
+        reader = CalibratedSensorReader(
+            sensor_key="mixing_temp",
+            db_path=self.db_path,
+            simulate=True,
+        )
+        val, t = reader.calculate_calibrated_value(28.15)
+        self.assertEqual(val, 28.15)
+        self.assertIsNone(t)
+        self.assertEqual(reader.meta["name"], "Mixing Tank Temperature (DS18B20)")
+        reader.close()
+
+    @patch("app.services.temp_sensor.read_mixing_tank_temp")
+    @patch("app.services.temp_sensor.is_w1_sensor_available")
+    def test_mixing_temp_hardware_read(self, mock_available, mock_read):
+        mock_available.return_value = True
+        mock_read.return_value = 27.80
+        reader = CalibratedSensorReader(
+            sensor_key="mixing_temp",
+            db_path=self.db_path,
+            simulate=False,
+        )
+        self.assertTrue(reader.is_hardware_available)
+        raw_val = reader.read_live_raw()
+        self.assertEqual(raw_val, 27.80)
+        cal_val, t_comp = reader.calculate_calibrated_value(raw_val)
+        self.assertEqual(cal_val, 27.80)
+        self.assertIsNone(t_comp)
         reader.close()
 
     def test_db_recording_and_reset(self):

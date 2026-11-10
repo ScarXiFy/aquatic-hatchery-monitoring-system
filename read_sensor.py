@@ -3,17 +3,18 @@
 Dedicated Calibrated Single-Sensor Reader & Logger
 
 Allows selecting and monitoring only one sensor at a time (pH, Dissolved Oxygen,
-Salinity, or Temperature), applies the calibrated slope and offset equations to
-live analog voltage readings, logs the calibrated output with timestamps into
-a dedicated SQLite database, and prints live readings and statistical summaries
-to the terminal.
+Salinity, Main Tank Temperature, or Mixing Tank Temperature), applies the calibrated
+slope and offset equations to live analog voltage readings, logs the calibrated output
+with timestamps into a dedicated SQLite database, and prints live readings and
+statistical summaries to the terminal.
 
 Calibrated Equations Applied:
-  - pH:       y = (-6.41401) * voltage + 17.29167
-  - DO:       y = 5.93086 * voltage + 0.3273368
-  - Salinity: live_v25 = ((voltage - 0.00255) / (1.0 + 0.02 * (live_temp - 25.0))) + 0.00255
-              y = 38.265306 * (live_v25 - 0.00255)
-  - Temp:     Direct DS18B20 digital read (accurate as-is, no calibration needed)
+  - pH:          y = (-6.41401) * voltage + 17.29167
+  - DO:          y = 5.93086 * voltage + 0.3273368
+  - Salinity:    live_v25 = ((voltage - 0.00255) / (1.0 + 0.02 * (live_temp - 25.0))) + 0.00255
+                 y = 38.265306 * (live_v25 - 0.00255)
+  - Temp:        Direct Main Tank DS18B20 digital read (accurate as-is, no calibration needed)
+  - Mixing Temp: Direct Mixing Tank DS18B20 digital read (accurate as-is, no calibration needed)
 """
 
 import argparse
@@ -76,6 +77,13 @@ SENSOR_METADATA = {
         "max": 60.0,
         "sim_range": (25.5, 27.5),
     },
+    "mixing_temp": {
+        "name": "Mixing Tank Temperature (DS18B20)",
+        "unit": "°C",
+        "min": 0.0,
+        "max": 60.0,
+        "sim_range": (25.5, 27.5),
+    },
 }
 
 # Sensor alias mapping
@@ -92,6 +100,17 @@ SENSOR_ALIASES = {
     "4": "temp",
     "temp": "temp",
     "temperature": "temp",
+    "main_temp": "temp",
+    "temp_main": "temp",
+    "main_tank_temp": "temp",
+    "5": "mixing_temp",
+    "mixing_temp": "mixing_temp",
+    "temp_mixing": "mixing_temp",
+    "mixing": "mixing_temp",
+    "mixing_tank_temp": "mixing_temp",
+    "temp_mixing_tank": "mixing_temp",
+    "mixing_ds18b20": "mixing_temp",
+    "ds18b20_mixing": "mixing_temp",
 }
 
 
@@ -131,7 +150,7 @@ class CalibratedSensorReader:
         k = str(key).strip().lower()
         if k in SENSOR_ALIASES:
             return SENSOR_ALIASES[k]
-        raise ValueError(f"Unknown sensor '{key}'. Available options: ph, do, salinity, temp")
+        raise ValueError(f"Unknown sensor '{key}'. Available options: ph, do, salinity, temp, mixing_temp")
 
     def _init_db(self):
         """Initializes the dedicated SQLite database and table."""
@@ -170,17 +189,32 @@ class CalibratedSensorReader:
             self.is_hardware_available = False
             return
 
-        if self.sensor_key == "temp":
+        if self.sensor_key in ("temp", "mixing_temp"):
             try:
-                from app.services.temp_sensor import is_w1_sensor_available, read_main_tank_temp
-                if is_w1_sensor_available():
-                    temp_val = read_main_tank_temp()
+                from app.services.temp_sensor import (
+                    MAIN_TANK_DEVICE_FILE,
+                    MIXING_TANK_DEVICE_FILE,
+                    is_w1_sensor_available,
+                    read_main_tank_temp,
+                    read_mixing_tank_temp,
+                )
+                if self.sensor_key == "mixing_temp":
+                    dev_file = MIXING_TANK_DEVICE_FILE
+                    read_fn = read_mixing_tank_temp
+                    name = "Mixing Tank DS18B20"
+                else:
+                    dev_file = MAIN_TANK_DEVICE_FILE
+                    read_fn = read_main_tank_temp
+                    name = "Main Tank DS18B20"
+
+                if is_w1_sensor_available(dev_file):
+                    temp_val = read_fn()
                     if temp_val is not None:
                         self.is_hardware_available = True
-                        print("[HARDWARE] Main Tank DS18B20 Temperature sensor detected.")
+                        print(f"[HARDWARE] {name} Temperature sensor detected.")
                         return
                 self.is_hardware_available = False
-                print("[WARNING] Main Tank DS18B20 not detected. Falling back to simulated readings.")
+                print(f"[WARNING] {name} not detected. Falling back to simulated readings.")
             except Exception as e:
                 self.is_hardware_available = False
                 print(f"[WARNING] Temperature sensor init failed ({e}). Falling back to simulation.")
@@ -202,11 +236,15 @@ class CalibratedSensorReader:
 
     def read_live_raw(self) -> float:
         """Reads raw voltage from ADC, or temperature from DS18B20."""
-        if self.sensor_key == "temp":
+        if self.sensor_key in ("temp", "mixing_temp"):
             if self.is_hardware_available:
                 try:
-                    from app.services.temp_sensor import read_main_tank_temp
-                    val = read_main_tank_temp()
+                    if self.sensor_key == "mixing_temp":
+                        from app.services.temp_sensor import read_mixing_tank_temp
+                        val = read_mixing_tank_temp()
+                    else:
+                        from app.services.temp_sensor import read_main_tank_temp
+                        val = read_main_tank_temp()
                     if val is not None:
                         return round(val, 2)
                 except Exception as e:
@@ -268,7 +306,7 @@ class CalibratedSensorReader:
             val = max(self.meta["min"], min(self.meta["max"], val))
             return round(val, 2), live_temp
 
-        if self.sensor_key == "temp":
+        if self.sensor_key in ("temp", "mixing_temp"):
             return round(raw_val, 2), None
 
         return round(raw_val, 2), None
@@ -328,7 +366,7 @@ class CalibratedSensorReader:
                 f"Raw Voltage: {raw_val:.4f} V | Calibrated Salinity: {cal_val:5.2f} {unit}{t_str} | "
                 f"DB ID: {reading_id}"
             )
-        elif self.sensor_key == "temp":
+        elif self.sensor_key in ("temp", "mixing_temp"):
             f_val = (cal_val * 9.0 / 5.0) + 32.0
             print(
                 f"{mode_tag} #{sample_num:03d} | {timestamp} | "
@@ -372,7 +410,7 @@ class CalibratedSensorReader:
             print(f"Output Spread (Max - Min): {spread:.2f} {unit}")
             print(f"Standard Deviation       : {std_dev:.4f} {unit}")
 
-            if self.sensor_key != "temp":
+            if self.sensor_key not in ("temp", "mixing_temp"):
                 avg_raw = sum(self.session_raw_readings) / count
                 print(f"Average Raw Voltage      : {avg_raw:.4f} V")
         print("=" * 75)
@@ -398,7 +436,7 @@ class CalibratedSensorReader:
         print(f"          CALIBRATED {self.meta['name'].upper()} MONITOR")
         print("=" * 75)
         print(f"Sensor        : {self.meta['name']} (Key: {self.sensor_key})")
-        if self.sensor_key != "temp":
+        if self.sensor_key not in ("temp", "mixing_temp"):
             print(f"ADC Channel   : AIN{self.channel}")
             if self.sensor_key == "ph":
                 print(f"Calibration   : y = {self.meta['slope']} * V + {self.meta['offset']}")
@@ -477,7 +515,7 @@ def view_history(db_path: Path, sensor: str | None = None, limit: int = 50):
     for row in reversed(rows):
         notes = row["notes"] or ""
         cal_str = f"{row['calibrated_value']:.2f} {row['unit']}"
-        raw_str = f"{row['raw_value']:.4f}V" if row["sensor"] != "temp" else f"{row['raw_value']:.2f}°C"
+        raw_str = f"{row['raw_value']:.4f}V" if row["sensor"] not in ("temp", "mixing_temp") else f"{row['raw_value']:.2f}°C"
         print(f"{row['id']:<6} | {row['timestamp']:<19} | {row['sensor']:<10} | {raw_str:<10} | {cal_str:<20} | {notes}")
     print("=" * 85)
 
@@ -533,10 +571,11 @@ def interactive_select_sensor() -> str:
     print("  2) Dissolved Oxygen [DO] (Channel 2)")
     print("  3) Salinity / EC (Channel 1, Temp Compensated)")
     print("  4) Temperature (Main Tank DS18B20)")
+    print("  5) Temperature (Mixing Tank DS18B20)")
     print("=" * 50)
     while True:
         try:
-            choice = input("Enter choice [1-4 or name] (default: 1): ").strip()
+            choice = input("Enter choice [1-5 or name] (default: 1): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting.")
             sys.exit(0)
@@ -545,7 +584,7 @@ def interactive_select_sensor() -> str:
             return "ph"
         if choice in SENSOR_ALIASES:
             return SENSOR_ALIASES[choice]
-        print(f"Invalid selection '{choice}'. Please enter 1, 2, 3, 4, or sensor name (ph, do, salinity, temp).")
+        print(f"Invalid selection '{choice}'. Please enter 1, 2, 3, 4, 5, or sensor name (ph, do, salinity, temp, mixing_temp).")
 
 
 def main():
@@ -556,7 +595,7 @@ def main():
         "--sensor",
         type=str,
         default=None,
-        help="Sensor to read: 'ph', 'do', 'salinity', or 'temp' (if omitted, prompts interactively)",
+        help="Sensor to read: 'ph', 'do', 'salinity', 'temp', or 'mixing_temp' (if omitted, prompts interactively)",
     )
     parser.add_argument(
         "--interval",
