@@ -136,8 +136,8 @@ class TestMixerAndHeating(unittest.TestCase):
     def test_heater_pulse_and_periodic_recheck(self):
         """
         Test that when heating is needed:
-        1. Heater relay activates for 1s (shortened for test), then immediately disables.
-        2. After 60s (shortened for test), if heating is still needed, heater activates again.
+        1. Heater relay activates for 5s (shortened for test), then immediately disables.
+        2. After 45s (shortened for test), if heating is still needed, heater activates again.
         3. When heating is disabled, heater stops and no further pulses occur.
         """
         orig_pulse = piUtils.HEATER_PULSE_DURATION
