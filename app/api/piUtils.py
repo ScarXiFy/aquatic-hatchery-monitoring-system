@@ -111,7 +111,7 @@ mosfet = None
 CALIBRATED_LUX = {
     0.0: 0.0,
     100.0: 180.0,   # Adjust this number until physical sensor reads 100
-    500.0: 756.0,
+    500.0: 758.0,
     1000.0: 1580.0,
     3000.0: 3000.0,
 }
