@@ -110,9 +110,9 @@ mosfet = None
 # Map requested target to an effective target that yields true lux
 CALIBRATED_LUX = {
     0.0: 0.0,
-    100.0: 250.0,   # Adjust this number until physical sensor reads 100
-    500.0: 880.0,
-    1000.0: 1550.0,
+    100.0: 180.0,   # Adjust this number until physical sensor reads 100
+    500.0: 800.0,
+    1000.0: 1580.0,
     3000.0: 3000.0,
 }
 
