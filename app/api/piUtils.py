@@ -107,6 +107,15 @@ mosfet = None
 
 # LED Control functions
 
+# Map requested target to an effective target that yields true lux
+CALIBRATED_LUX = {
+    0.0: 0.0,
+    100.0: 115.0,   # Adjust this number until physical sensor reads 100
+    500.0: 500.0,
+    1000.0: 1000.0,
+    3000.0: 3000.0,
+}
+
 def setDummyLux(target_lux: float):
     """
     Converts a target lux value into a PWM duty cycle (0 to 100)
@@ -118,7 +127,8 @@ def setDummyLux(target_lux: float):
     except (TypeError, ValueError):
         target_lux = 0.0
 
-    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    effective_target = CALIBRATED_LUX.get(target_lux, target_lux)
+    duty_cycle = (effective_target / MAX_LUX) * 100.0
     duty_cycle = max(0.0, min(100.0, duty_cycle))
     currentLedLux = target_lux
     currentLedDutyCycle = duty_cycle
@@ -140,7 +150,8 @@ def setRpiLux(target_lux: float):
     except (TypeError, ValueError):
         target_lux = 0.0
 
-    duty_cycle = (target_lux / MAX_LUX) * 100.0
+    effective_target = CALIBRATED_LUX.get(target_lux, target_lux)
+    duty_cycle = (effective_target / MAX_LUX) * 100.0
     duty_cycle = max(0.0, min(100.0, duty_cycle))
     currentLedLux = target_lux
     currentLedDutyCycle = duty_cycle

@@ -46,10 +46,10 @@ class TestLEDOperation(unittest.TestCase):
     def test_dummy_set_lux_levels(self):
         """Test dummy mode set_lux for hatchery levels (0, 100, 500, 1000, 3000)."""
         hatchery_levels = [
-            (0, 0.0),
-            (100, (100 / 3000) * 100),
-            (500, (500 / 3000) * 100),
-            (1000, (1000 / 3000) * 100),
+            (0, (piUtils.CALIBRATED_LUX.get(0, 0) / 3000) * 100),
+            (100, (piUtils.CALIBRATED_LUX.get(100, 100) / 3000) * 100),
+            (500, (piUtils.CALIBRATED_LUX.get(500, 500) / 3000) * 100),
+            (1000, (piUtils.CALIBRATED_LUX.get(1000, 1000) / 3000) * 100),
             (3000, 100.0),
         ]
 
