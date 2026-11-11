@@ -15,7 +15,10 @@ def generate_sensor_reading():
     # Initialize from DB if not already initialized in memory
     latest = get_latest_reading()
     if current_temp is None:
-        current_temp = latest["temperature"] if latest else 26.0
+        if latest and abs(latest.get("temperature", 0.0) - 85.0) >= 0.01:
+            current_temp = latest["temperature"]
+        else:
+            current_temp = 26.0
     if current_do is None:
         current_do = latest["dissolved_oxygen"] if latest else 7.2
         
@@ -27,7 +30,10 @@ def generate_sensor_reading():
     # Use real DS18B20 sensor on RPi; fall back to simulation otherwise
     sensor_temp = read_temp_sensor()
     if sensor_temp is not None:
-        current_temp = sensor_temp
+        if abs(sensor_temp - 85.0) < 0.01:
+            print("[WARN] Main tank sensor returned invalid 85.0C power-on reading - ignoring")
+        else:
+            current_temp = sensor_temp
     else:
         # Gradually move current values toward target setpoints
         # Temperature: move 0.15 degrees toward target per step (3s)

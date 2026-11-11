@@ -34,6 +34,7 @@ class TestMainValve(unittest.TestCase):
         piUtils.heatingSystemActive = False
         piUtils.mainValveOpen = False
         piUtils.sourceValveOpen = False
+        piUtils.reset_temperature_control_state()
         CONTROL_STATE["valves"]["main"] = False
         CONTROL_STATE["valves"]["source"] = False
 
@@ -87,14 +88,15 @@ class TestMainValve(unittest.TestCase):
         self.assertTrue(piUtils.mainValveOpen)
 
     def test_apply_temperature_control_high_temp(self):
-        """Test applyTemperatureControl opens cooling valve and main valve when tank temperature is HIGH."""
+        """Test applyTemperatureControl opens cooling valve and main valve when tank temperature is HIGH (3 consecutive readings)."""
         self.assertFalse(piUtils.mainValveOpen)
-        piUtils.applyTemperatureControl(
-            temperature=28.0,
-            setpoint=26.0,
-            tolerance=0.5,
-            secondary_temp=28.0,
-        )
+        for _ in range(3):
+            piUtils.applyTemperatureControl(
+                temperature=28.0,
+                setpoint=26.0,
+                tolerance=0.5,
+                secondary_temp=28.0,
+            )
         self.assertTrue(piUtils.coolingSystemActive)
         self.assertTrue(piUtils.coolingValveOpen)
         self.assertFalse(piUtils.heatingSystemActive)
@@ -102,14 +104,15 @@ class TestMainValve(unittest.TestCase):
         self.assertTrue(piUtils.mainValveOpen)
 
     def test_apply_temperature_control_low_temp(self):
-        """Test applyTemperatureControl opens heating valve and main valve when tank temperature is LOW."""
+        """Test applyTemperatureControl opens heating valve and main valve when tank temperature is LOW (3 consecutive readings)."""
         self.assertFalse(piUtils.mainValveOpen)
-        piUtils.applyTemperatureControl(
-            temperature=24.0,
-            setpoint=26.0,
-            tolerance=0.5,
-            secondary_temp=24.0,
-        )
+        for _ in range(3):
+            piUtils.applyTemperatureControl(
+                temperature=24.0,
+                setpoint=26.0,
+                tolerance=0.5,
+                secondary_temp=24.0,
+            )
         self.assertTrue(piUtils.heatingSystemActive)
         self.assertTrue(piUtils.heatingValveOpen)
         self.assertFalse(piUtils.coolingSystemActive)
@@ -124,13 +127,14 @@ class TestMainValve(unittest.TestCase):
         - Main valve is ALWAYS ON.
         - At least one valve is ALWAYS ON.
         """
-        # 1. Trigger heating (temp < desired)
-        piUtils.applyTemperatureControl(
-            temperature=24.0,
-            setpoint=26.0,
-            tolerance=0.5,
-            secondary_temp=24.0,
-        )
+        # 1. Trigger heating (temp < desired, 3 consecutive readings)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(
+                temperature=24.0,
+                setpoint=26.0,
+                tolerance=0.5,
+                secondary_temp=24.0,
+            )
         self.assertTrue(piUtils.heatingValveOpen)
         self.assertFalse(piUtils.coolingValveOpen)
         self.assertTrue(piUtils.mainValveOpen)
@@ -152,13 +156,14 @@ class TestMainValve(unittest.TestCase):
         # Verify at least one valve is open
         self.assertTrue(piUtils.coolingValveOpen or piUtils.heatingValveOpen)
 
-        # 3. Trigger cooling (temp > desired)
-        piUtils.applyTemperatureControl(
-            temperature=28.0,
-            setpoint=26.0,
-            tolerance=0.5,
-            secondary_temp=28.0,
-        )
+        # 3. Trigger cooling (temp > desired, 3 consecutive readings)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(
+                temperature=28.0,
+                setpoint=26.0,
+                tolerance=0.5,
+                secondary_temp=28.0,
+            )
         self.assertTrue(piUtils.coolingValveOpen)
         self.assertFalse(piUtils.heatingValveOpen)
         self.assertTrue(piUtils.mainValveOpen)

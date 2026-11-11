@@ -208,6 +208,8 @@ def init_system_controls():
     if latest:
         # Initialize using the latest corresponding sensor reading
         temp_init = latest["temperature"]
+        if abs(float(temp_init) - 85.0) < 0.01:
+            temp_init = 26.0
         do_init = latest["dissolved_oxygen"]
         db.execute(
             "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'temperature'",

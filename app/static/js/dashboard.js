@@ -82,7 +82,7 @@
 
     if (min === max) {
       const limit = max;
-      const warning_limit = metric === "temperature" ? 0.5 : 0.3;
+      const warning_limit = 0.5; // Warning alert appears at +-0.5 from setpoint for temperature and DO
       const critical_limit = metric === "temperature" ? 2.0 : 1.0;
       const diff = Math.abs(v - limit);
       if (diff >= critical_limit) {

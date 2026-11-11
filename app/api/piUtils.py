@@ -810,24 +810,48 @@ DO_TOLERANCE   = 0.3   # mg/L either side of setpoint
 DO_TRIG_INTERVAL = 30.0
 _last_do_trig_time = 0.0
 
+TEMP_CONSECUTIVE_REQUIRED = 3
+_temp_consecutive_high = 0
+_temp_consecutive_low = 0
 
-def applyTemperatureControl(temperature: float, setpoint: float, tolerance: float = TEMP_TOLERANCE, secondary_temp: float = None):
+
+def reset_temperature_control_state():
+    """Reset consecutive reading counters for temperature threshold debouncing."""
+    global _temp_consecutive_high, _temp_consecutive_low
+    _temp_consecutive_high = 0
+    _temp_consecutive_low = 0
+
+
+def applyTemperatureControl(
+    temperature: float,
+    setpoint: float,
+    tolerance: float = TEMP_TOLERANCE,
+    secondary_temp: float = None,
+    consecutive_required: int = TEMP_CONSECUTIVE_REQUIRED,
+):
     """
     Maintains water temperature and guarantees continuous water circulation:
     - Main valve: ALWAYS ON for constant circulation.
     - temp > setpoint + tolerance:
+        Waits until 3 consecutive readings show that temperature has exceeded threshold
+        before triggering cooling system.
+        Once triggered (or while cooling is active):
         Cooling system ON, cooling valve ON (flow from cooling), heating & heating valve OFF.
         Records last active system as 'cooling'.
     - temp < setpoint - tolerance:
+        Waits until 3 consecutive readings show that temperature has dropped below threshold
+        before triggering heating system.
+        Once triggered (or while heating is active):
         Heating system ON, heating valve ON (flow from heat), cooling & cooling valve OFF.
         Records last active system as 'heating'.
     - temp == setpoint (within tolerance band):
         Both heating and cooling active systems turn OFF.
+        Consecutive high/low counters reset to 0.
         At least one valve remains OPEN to maintain constant circulation:
         - If last active was heating: heating valve OFF, cooling valve ON (flow from cooling).
         - If last active was cooling: cooling valve OFF, heating valve ON (flow from heating).
     """
-    global last_temp_system
+    global last_temp_system, _temp_consecutive_high, _temp_consecutive_low
     high = setpoint + tolerance
     low  = setpoint - tolerance
 
@@ -842,24 +866,62 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
         mainValve(True)
 
     if temperature > high:
-        print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) - activating cooling (cooling valve ON, flow from cooling)")
-        last_temp_system = "cooling"
-        heatingSystem(False)
-        heatingValve(False)
-        coolingSystem(True)
-        coolingValve(True)
-        mainValve(True)
+        _temp_consecutive_high += 1
+        _temp_consecutive_low = 0
+
+        # If heating system was active, ensure it is immediately shut off
+        if heatingSystemActive:
+            heatingSystem(False)
+            heatingValve(False)
+
+        if _temp_consecutive_high >= consecutive_required or coolingSystemActive:
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - activating cooling (cooling valve ON, flow from cooling)")
+            last_temp_system = "cooling"
+            heatingSystem(False)
+            heatingValve(False)
+            coolingSystem(True)
+            coolingValve(True)
+            mainValve(True)
+        else:
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering cooling")
+            mainValve(True)
+            if last_temp_system == "heating":
+                heatingValve(False)
+                coolingValve(True)
+            else:
+                coolingValve(False)
+                heatingValve(True)
 
     elif temperature < low:
-        print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) - activating heating (heating valve ON, flow from heating)")
-        last_temp_system = "heating"
-        coolingSystem(False)
-        coolingValve(False)
-        heatingSystem(True)
-        heatingValve(True)
-        mainValve(True)
+        _temp_consecutive_low += 1
+        _temp_consecutive_high = 0
+
+        # If cooling system was active, ensure it is immediately shut off
+        if coolingSystemActive:
+            coolingSystem(False)
+            coolingValve(False)
+
+        if _temp_consecutive_low >= consecutive_required or heatingSystemActive:
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - activating heating (heating valve ON, flow from heating)")
+            last_temp_system = "heating"
+            coolingSystem(False)
+            coolingValve(False)
+            heatingSystem(True)
+            heatingValve(True)
+            mainValve(True)
+        else:
+            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering heating")
+            mainValve(True)
+            if last_temp_system == "heating":
+                heatingValve(False)
+                coolingValve(True)
+            else:
+                coolingValve(False)
+                heatingValve(True)
 
     else:
+        _temp_consecutive_high = 0
+        _temp_consecutive_low = 0
         print(f"[CONTROL] Main Tank temp STABLE ({temperature}C within +-{tolerance}C of setpoint {setpoint}C)")
         coolingSystem(False)
         heatingSystem(False)
@@ -877,35 +939,54 @@ def applyTemperatureControl(temperature: float, setpoint: float, tolerance: floa
 
 def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: float = DO_TOLERANCE):
     """
-    High DO (reading > setpoint + tolerance) -> close solenoid valve, open bleed valve (stepper) by 33%.
-    Low DO  (reading < setpoint - tolerance) -> open solenoid valve, close bleed valve (stepper) by 33%.
-    Stable  (within tolerance band)          -> retain current state
+    Maintains dissolved oxygen level:
+    - do_level <= setpoint - tolerance (deviation >= 0.3 mg/L below setpoint):
+        DO control enabled -> opens aerator solenoid valve (increments open valve count),
+        closes bleed valve by 33%.
+    - setpoint - tolerance < do_level < setpoint:
+        DO recovering -> maintains current number of open valves.
+    - setpoint <= do_level <= setpoint + tolerance (between setpoint and 0.3 mg/L deviation above setpoint):
+        DO at/above setpoint -> closes ALL DO aerator valves instead of maintaining current open valves,
+        and fully opens bleed valve (100.0%) in response to all solenoid valves closing.
+    - do_level > setpoint + tolerance (deviation > 0.3 mg/L above setpoint):
+        DO HIGH -> all aerator valves closed, bleed valve fully opened (100.0%) to bleed excess oxygen.
     """
     global _last_do_trig_time
-    high = setpoint + tolerance
-    low  = setpoint - tolerance
+    high = round(setpoint + tolerance, 4)
+    low  = round(setpoint - tolerance, 4)
 
+    # Upper band: between setpoint and 0.3 mg/L deviation above setpoint
     if setpoint <= do_level <= high:
-        print(f"[CONTROL] DO within +{tolerance} mg/L of setpoint {setpoint} mg/L - CLOSING ALL AERATOR SOLENOIDS")
-    
-    if low <= do_level <= high:
-        print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")   # keep your existing stable print
+        print(f"[CONTROL] DO within setpoint to +{tolerance} mg/L ({do_level} mg/L in [{setpoint}, {high}] mg/L) - CLOSING ALL AERATOR VALVES & FULLY OPENING BLEED VALVE")
+        if _dosvcounter > 0:
+            setDoSolenoidValveCount(0)
+        doBleedValve(100.0)
+        _last_do_trig_time = 0.0  # Reset trigger timer so re-enabling can respond promptly if needed
         return
 
+    # High DO: exceeding setpoint + tolerance
+    if do_level > high:
+        if _dosvcounter > 0:
+            print(f"[CONTROL] DO HIGH ({do_level} mg/L > {high} mg/L) - closing all aerator valves & fully opening bleed valve")
+            setDoSolenoidValveCount(0)
+        doBleedValve(100.0)
+        return
+
+    # Stable / recovering: between (setpoint - tolerance) and setpoint
+    if low < do_level < setpoint:
+        print(f"[CONTROL] DO RECOVERING ({do_level} mg/L within -{tolerance} mg/L of setpoint {setpoint} mg/L) - maintaining {_dosvcounter}/3 open valves, bleed valve {doBleedValvePercent:.1f}%")
+        return
+
+    # Low DO: deviation has reached or exceeded 0.3 mg/L below setpoint
     now = time.monotonic()
     if now - _last_do_trig_time < DO_TRIG_INTERVAL:
         return
     _last_do_trig_time = now
-    
-    if do_level > high:
-        print(f"[CONTROL] DO HIGH ({do_level} mg/L > {high} mg/L, setpoint {setpoint} mg/L) - closing solenoid, opening bleed 33%")
-        doSolenoidValve(False)
-        doBleedValve(doBleedValvePercent + 33.0)
 
-    else:
-        print(f"[CONTROL] DO LOW ({do_level} mg/L < {low} mg/L, setpoint {setpoint} mg/L) - opening solenoid, closing bleed 33%")
-        doSolenoidValve(True)
-        doBleedValve(max(0.0, doBleedValvePercent - 33.0))
+    print(f"[CONTROL] DO LOW ({do_level} mg/L <= {low} mg/L, setpoint {setpoint} mg/L) - enabling DO control: opening aerator solenoid, closing bleed 33%")
+    doSolenoidValve(True)
+    doBleedValve(max(0.0, doBleedValvePercent - 33.0))
+
 
 # ---------------------------------------------------------------------------
 # DS18B20 temperature sensor (1-Wire, RPi only)
@@ -943,35 +1024,73 @@ def _read_temp_raw():
 
 
 def _parse_ds18b20(device_file: str, label: str):
-    """Shared DS18B20 read-and-parse logic."""
+    """
+    Shared DS18B20 read-and-parse logic.
+    Handles CRC checks and filters out the 85.0°C power-on reset artifact (unconverted scratchpad value)
+    by waiting for conversion (0.8s) and retrying up to 5 times. Rejects persistent 85.0°C readings.
+    """
     import time as _time
-    with open(device_file, "r") as f:
-        lines = f.readlines()
-    retries = 0
-    while lines[0].strip()[-3:] != "YES" and retries < 5:
-        _time.sleep(0.2)
-        with open(device_file, "r") as f:
-            lines = f.readlines()
-        retries += 1
-    equals_pos = lines[1].find("t=")
-    if equals_pos == -1:
-        print(f"[RPI] {label} DS18B20 parse error - using simulated value")
-        return None
-    temp_c = float(lines[1][equals_pos + 2:]) / 1000.0
-    print(f"[RPI] {label} DS18B20 reading: {temp_c:.2f}C")
-    return round(temp_c, 2)
+    for attempt in range(5):
+        try:
+            with open(device_file, "r") as f:
+                lines = f.readlines()
+        except Exception:
+            _time.sleep(0.2)
+            continue
+
+        retries = 0
+        while (not lines or len(lines) < 2 or lines[0].strip()[-3:] != "YES") and retries < 5:
+            _time.sleep(0.2)
+            try:
+                with open(device_file, "r") as f:
+                    lines = f.readlines()
+            except Exception:
+                pass
+            retries += 1
+
+        if not lines or len(lines) < 2 or lines[0].strip()[-3:] != "YES":
+            _time.sleep(0.2)
+            continue
+
+        equals_pos = lines[1].find("t=")
+        if equals_pos == -1:
+            print(f"[RPI] {label} DS18B20 parse error - using simulated value")
+            return None
+
+        try:
+            temp_c = float(lines[1][equals_pos + 2:].strip()) / 1000.0
+        except (ValueError, IndexError):
+            _time.sleep(0.2)
+            continue
+
+        # Check for DS18B20 power-on reset value (85.0°C)
+        if abs(temp_c - 85.0) < 0.01:
+            print(f"[RPI] {label} DS18B20 returned 85.0C (power-on reset value), waiting for conversion (attempt {attempt + 1}/5)...")
+            _time.sleep(0.8)
+            continue
+
+        print(f"[RPI] {label} DS18B20 reading: {temp_c:.2f}C")
+        return round(temp_c, 2)
+
+    print(f"[RPI] {label} DS18B20 returned persistent invalid 85.0C or failed read - ignoring invalid reading")
+    return None
 
 
 def read_temp_sensor():
     """
     Read temperature (C) from the DS18B20 1-Wire sensor.
-    Returns a float on RPi when the sensor is present, or None otherwise (then use simulated value).
+    Returns a float on RPi when the sensor is present and valid,
+    or None otherwise (then use simulated value). Rejects invalid 85.0C reading.
     """
     if not isRpiPresent or _temp_device_file is None:
         print("[DUMMY] Main Tank temperature sensor read - using simulated value")
         return None
     try:
-        return _parse_ds18b20(_temp_device_file, "primary")
+        val = _parse_ds18b20(_temp_device_file, "primary")
+        if val is not None and abs(val - 85.0) < 0.01:
+            print("[RPI] Main Tank DS18B20 rejected invalid 85.0C reading")
+            return None
+        return val
     except Exception as e:
         print(f"[RPI] Main Tank DS18B20 read failed ({e}) - using simulated value")
         return None
@@ -980,13 +1099,18 @@ def read_temp_sensor():
 def read_secondary_temp_sensor():
     """
     Read temperature (C) from the Mixing tank DS18B20 1-Wire sensor.
-    Returns a float on RPi when the sensor is present, or None otherwise (then use simulated value).
+    Returns a float on RPi when the sensor is present and valid,
+    or None otherwise (then use simulated value). Rejects invalid 85.0C reading.
     """
     if not isRpiPresent or _temp_secondary_device_file is None:
         print("[DUMMY] Mixing tank temperature sensor read - using simulated value")
         return None
     try:
-        return _parse_ds18b20(_temp_secondary_device_file, "secondary")
+        val = _parse_ds18b20(_temp_secondary_device_file, "secondary")
+        if val is not None and abs(val - 85.0) < 0.01:
+            print("[RPI] Mixing tank DS18B20 rejected invalid 85.0C reading")
+            return None
+        return val
     except Exception as e:
         print(f"[RPI] Mixing tank DS18B20 read failed ({e}) - using simulated value")
         return None

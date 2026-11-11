@@ -24,6 +24,14 @@ class TestTempSensorService(unittest.TestCase):
         temp = parse_w1_slave(sample_output)
         self.assertEqual(temp, 23.12)
 
+    def test_parse_w1_slave_power_on_reset_85c_rejected(self):
+        sample_output = [
+            "50 05 4b 46 7f ff 0c 10 1c : crc=1c YES\n",
+            "50 05 4b 46 7f ff 0c 10 1c t=85000\n",
+        ]
+        temp = parse_w1_slave(sample_output)
+        self.assertIsNone(temp)
+
     def test_parse_w1_slave_crc_fail(self):
         sample_output = [
             "72 01 4b 46 7f ff 0e 10 57 : crc=57 NO\n",

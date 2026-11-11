@@ -235,9 +235,11 @@ class TestMixerAndHeating(unittest.TestCase):
         """Test applyTemperatureControl activates heating and mixer when temperature is below setpoint."""
         orig_delay = piUtils.MIXER_SHUTDOWN_DELAY
         piUtils.MIXER_SHUTDOWN_DELAY = 0.1
+        piUtils.reset_temperature_control_state()
         try:
-            # Temperature = 24.0, setpoint = 26.0, tolerance = 0.5 (low = 25.5)
-            piUtils.applyTemperatureControl(24.0, 26.0, tolerance=0.5, secondary_temp=24.2)
+            # Temperature = 24.0, setpoint = 26.0, tolerance = 0.5 (low = 25.5, requires 3 consecutive readings)
+            for _ in range(3):
+                piUtils.applyTemperatureControl(24.0, 26.0, tolerance=0.5, secondary_temp=24.2)
             self.assertTrue(piUtils.heatingSystemActive)
             self.assertTrue(piUtils.heatingValveOpen)
             self.assertFalse(piUtils.coolingSystemActive)

@@ -116,7 +116,11 @@ def parse_w1_slave(lines: list[str]) -> float | None:
 
     try:
         temp_raw = float(lines[1][equals_pos + 2:].strip())
-        return round(temp_raw / 1000.0, 2)
+        temp_c = round(temp_raw / 1000.0, 2)
+        # DS18B20 power-on reset scratchpad register value (+85.0°C) is treated as invalid/unconverted
+        if abs(temp_c - 85.0) < 0.01:
+            return None
+        return temp_c
     except (ValueError, IndexError):
         return None
 
