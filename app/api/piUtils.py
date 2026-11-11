@@ -884,6 +884,9 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
     global _last_do_trig_time
     high = setpoint + tolerance
     low  = setpoint - tolerance
+
+    if setpoint <= do_level <= high:
+        print(f"[CONTROL] DO within +{tolerance} mg/L of setpoint {setpoint} mg/L - CLOSING ALL AERATOR SOLENOIDS")
     
     if low <= do_level <= high:
         print(f"[CONTROL] DO STABLE ({do_level} mg/L within +-{tolerance} mg/L of setpoint {setpoint} mg/L) - solenoid {doSolenoidValveOpen}, bleed valve {doBleedValvePercent}")   # keep your existing stable print
