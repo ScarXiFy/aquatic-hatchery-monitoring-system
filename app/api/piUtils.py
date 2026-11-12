@@ -81,7 +81,10 @@ heatingSystemActive = False
 heatingValveOpen = False
 heaterActive = False
 mixerActive = False
+mixingFanActive = False
 last_temp_system = "cooling"  # Tracks last active temperature system ("heating" or "cooling")
+_heating_disabled_by_mixing = False
+_cooling_disabled_by_mixing = False
 
 # Synchronization for mixer and heater
 _mixer_timer = None
@@ -238,8 +241,9 @@ def _update_main_valve_state():
         mainValve(True)
 
 def setDummyMixer(active: bool):
-    global mixerActive
+    global mixerActive, mixingFanActive
     mixerActive = active
+    mixingFanActive = active
     print(f"[DUMMY] mixer motor -> {'ON' if active else 'OFF'}")
 
 def _setDummyHeaterRelay(active: bool):
@@ -252,7 +256,12 @@ _set_heater_relay = _setDummyHeaterRelay
 def _update_mixer_state():
     global _mixer_timer
     with _mixer_lock:
-        temp_system_active = coolingSystemActive or heatingSystemActive
+        temp_system_active = (
+            coolingSystemActive
+            or heatingSystemActive
+            or _heating_disabled_by_mixing
+            or _cooling_disabled_by_mixing
+        )
         if temp_system_active:
             if _mixer_timer is not None:
                 _mixer_timer.cancel()
@@ -265,7 +274,12 @@ def _update_mixer_state():
                     global _mixer_timer
                     with _mixer_lock:
                         _mixer_timer = None
-                        if not coolingSystemActive and not heatingSystemActive:
+                        if not (
+                            coolingSystemActive
+                            or heatingSystemActive
+                            or _heating_disabled_by_mixing
+                            or _cooling_disabled_by_mixing
+                        ):
                             mixer(False)
                 _mixer_timer = threading.Timer(MIXER_SHUTDOWN_DELAY, _delayed_mixer_off)
                 _mixer_timer.daemon = True
@@ -284,8 +298,9 @@ def _heating_worker():
             break
 
 def setRpiMixer(active: bool):
-    global mixerActive
+    global mixerActive, mixingFanActive
     mixerActive = active
+    mixingFanActive = active
     print(f"[RPI] mixer motor -> {'ON' if active else 'OFF'}")
     if isRpiPresent and GPIO is not None:
         GPIO.output(mixerPin, GPIO.LOW if active else GPIO.HIGH)
@@ -684,6 +699,8 @@ coolingValve = setDummyCoolingValve
 heatingSystem = setDummyHeatingSystem
 heatingValve = setDummyHeatingValve
 mixer = setDummyMixer
+mixingFan = setDummyMixer
+setMixingFan = setDummyMixer
 aeratorFan = setDummyAeratorFan
 aeratorCoolerFan = setDummyAeratorFan
 
@@ -794,6 +811,8 @@ if isRpiPresent:
     heatingSystem = setHeatingSystem
     heatingValve = setHeatingValve
     mixer = setMixer
+    mixingFan = setMixer
+    setMixingFan = setMixer
     aeratorFan = setAeratorFan
     aeratorCoolerFan = setAeratorFan
     doSolenoidValve = setDoSolenoidValve
@@ -923,7 +942,7 @@ def applyTemperatureControl(
                     _mix_consecutive_cool_disable += 1
                     _mix_consecutive_cool_enable = 0
                     if _mix_consecutive_cool_disable >= consecutive_required:
-                        print(f"[CONTROL] Mixing tank temp LOW ({secondary_temp}C <= {mix_cool_limit}C) [reading {_mix_consecutive_cool_disable}/{consecutive_required}] - disabling cooling system (cooling valve remains OPEN)")
+                        print(f"[CONTROL] Mixing tank temp LOW ({secondary_temp}C <= {mix_cool_limit}C) [reading {_mix_consecutive_cool_disable}/{consecutive_required}] - disabling cooling system (cooling valve remains OPEN, mixing fan remains ON)")
                         _cooling_disabled_by_mixing = True
                         coolingSystem(False)
                         _mix_consecutive_cool_disable = 0
@@ -949,7 +968,7 @@ def applyTemperatureControl(
                 else:
                     _mix_consecutive_cool_enable = 0
                     coolingSystem(False)
-                    print(f"[CONTROL] Cooling paused by mixing tank under-temp ({secondary_temp}C <= {mix_cool_limit}C) - cooling valve remains OPEN")
+                    print(f"[CONTROL] Cooling paused by mixing tank under-temp ({secondary_temp}C <= {mix_cool_limit}C) - cooling valve remains OPEN, mixing fan remains ON")
         else:
             print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering cooling")
             mainValve(True)
@@ -989,7 +1008,7 @@ def applyTemperatureControl(
                     _mix_consecutive_heat_disable += 1
                     _mix_consecutive_heat_enable = 0
                     if _mix_consecutive_heat_disable >= consecutive_required:
-                        print(f"[CONTROL] Mixing tank temp HIGH ({secondary_temp}C >= {mix_heat_limit}C) [reading {_mix_consecutive_heat_disable}/{consecutive_required}] - disabling heating system (heating valve remains OPEN)")
+                        print(f"[CONTROL] Mixing tank temp HIGH ({secondary_temp}C >= {mix_heat_limit}C) [reading {_mix_consecutive_heat_disable}/{consecutive_required}] - disabling heating system (heating valve remains OPEN, mixing fan remains ON)")
                         _heating_disabled_by_mixing = True
                         heatingSystem(False)
                         _mix_consecutive_heat_disable = 0
@@ -1015,7 +1034,7 @@ def applyTemperatureControl(
                 else:
                     _mix_consecutive_heat_enable = 0
                     heatingSystem(False)
-                    print(f"[CONTROL] Heating paused by mixing tank over-temp ({secondary_temp}C >= {mix_heat_limit}C) - heating valve remains OPEN")
+                    print(f"[CONTROL] Heating paused by mixing tank over-temp ({secondary_temp}C >= {mix_heat_limit}C) - heating valve remains OPEN, mixing fan remains ON")
         else:
             print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering heating")
             mainValve(True)

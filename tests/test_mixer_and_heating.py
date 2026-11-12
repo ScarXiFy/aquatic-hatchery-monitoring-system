@@ -258,6 +258,100 @@ class TestMixerAndHeating(unittest.TestCase):
         finally:
             piUtils.MIXER_SHUTDOWN_DELAY = orig_delay
 
+    def test_mixing_fan_remains_on_when_heating_disabled_by_mixing_tank_overtemp(self):
+        """
+        Even when the heating system is disabled because the mixing tank exceeded the 2 C limit,
+        the mixing fan (mixer motor) must remain ON, and must not shut down after the delay.
+        """
+        orig_delay = piUtils.MIXER_SHUTDOWN_DELAY
+        piUtils.MIXER_SHUTDOWN_DELAY = 0.05
+        piUtils.reset_temperature_control_state()
+        try:
+            # 1. Trigger heating mode with 3 low readings on main tank
+            for _ in range(3):
+                piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=25.0)
+            self.assertTrue(piUtils.heatingSystemActive)
+            self.assertTrue(piUtils.heatingValveOpen)
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+
+            # 2. Exceed 2 C limit in mixing tank (3 consecutive readings at 28.2 C >= 28.0 C)
+            for _ in range(3):
+                piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.2)
+
+            # Heating system disabled, heating valve still open
+            self.assertFalse(piUtils.heatingSystemActive)
+            self.assertTrue(piUtils.heatingValveOpen)
+            self.assertTrue(piUtils._heating_disabled_by_mixing)
+
+            # Mixing fan must REMAIN ON
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+            self.assertIsNone(piUtils._mixer_timer)
+
+            # Wait longer than shutdown delay to guarantee mixer does NOT shut off
+            time.sleep(0.1)
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+
+            # 3. Main tank returns to stable temperature (26.0 C)
+            piUtils.applyTemperatureControl(temperature=26.0, setpoint=26.0, tolerance=0.5, secondary_temp=26.0)
+            self.assertFalse(piUtils.heatingSystemActive)
+            self.assertFalse(piUtils._heating_disabled_by_mixing)
+
+            # Now that temperature control is complete, mixer shuts off after delay
+            self.assertTrue(self.wait_for(lambda: not piUtils.mixerActive, timeout=0.3))
+            self.assertFalse(piUtils.mixingFanActive)
+        finally:
+            piUtils.MIXER_SHUTDOWN_DELAY = orig_delay
+
+    def test_mixing_fan_remains_on_when_cooling_disabled_by_mixing_tank_undertemp(self):
+        """
+        Even when the cooling system is disabled because the mixing tank dropped 2 C below setpoint,
+        the mixing fan (mixer motor) must remain ON, and must not shut down after the delay.
+        """
+        orig_delay = piUtils.MIXER_SHUTDOWN_DELAY
+        piUtils.MIXER_SHUTDOWN_DELAY = 0.05
+        piUtils.reset_temperature_control_state()
+        try:
+            # 1. Trigger cooling mode with 3 high readings on main tank
+            for _ in range(3):
+                piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.0)
+            self.assertTrue(piUtils.coolingSystemActive)
+            self.assertTrue(piUtils.coolingValveOpen)
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+
+            # 2. Exceed 2 C limit in mixing tank (3 consecutive readings at 23.5 C <= 24.0 C)
+            for _ in range(3):
+                piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.5)
+
+            # Cooling system disabled, cooling valve still open
+            self.assertFalse(piUtils.coolingSystemActive)
+            self.assertTrue(piUtils.coolingValveOpen)
+            self.assertTrue(piUtils._cooling_disabled_by_mixing)
+
+            # Mixing fan must REMAIN ON
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+            self.assertIsNone(piUtils._mixer_timer)
+
+            # Wait longer than shutdown delay to guarantee mixer does NOT shut off
+            time.sleep(0.1)
+            self.assertTrue(piUtils.mixerActive)
+            self.assertTrue(piUtils.mixingFanActive)
+
+            # 3. Main tank returns to stable temperature (26.0 C)
+            piUtils.applyTemperatureControl(temperature=26.0, setpoint=26.0, tolerance=0.5, secondary_temp=26.0)
+            self.assertFalse(piUtils.coolingSystemActive)
+            self.assertFalse(piUtils._cooling_disabled_by_mixing)
+
+            # Now that temperature control is complete, mixer shuts off after delay
+            self.assertTrue(self.wait_for(lambda: not piUtils.mixerActive, timeout=0.3))
+            self.assertFalse(piUtils.mixingFanActive)
+        finally:
+            piUtils.MIXER_SHUTDOWN_DELAY = orig_delay
+
 
 if __name__ == "__main__":
     unittest.main()
