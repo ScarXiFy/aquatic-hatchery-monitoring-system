@@ -833,7 +833,7 @@ TEMP_CONSECUTIVE_REQUIRED = 3
 _temp_consecutive_high = 0
 _temp_consecutive_low = 0
 
-MIXING_TANK_TEMP_LIMIT = 2.0  # Limit (C) above setpoint for heating or below setpoint for cooling
+MIXING_TANK_TEMP_LIMIT = 1.0  # Limit (C) above setpoint for heating or below setpoint for cooling
 _heating_disabled_by_mixing = False
 _cooling_disabled_by_mixing = False
 _mix_consecutive_heat_disable = 0
@@ -869,8 +869,8 @@ def applyTemperatureControl(
     """
     Maintains water temperature and guarantees continuous water circulation:
     - Main valve: ALWAYS ON for constant circulation.
-    - temp > setpoint + tolerance:
-        Waits until 3 consecutive readings show that temperature has exceeded threshold
+    - temp >= setpoint + tolerance:
+        Waits until 3 consecutive readings show that temperature has reached or exceeded threshold
         before triggering cooling system.
         Once triggered (or while cooling mode is active):
         Cooling valve ON (flow from cooling), heating & heating valve OFF.
@@ -879,8 +879,8 @@ def applyTemperatureControl(
         If mixing tank <= setpoint - mixing_temp_limit for 3 continuous readings,
         cooling system is disabled while cooling valve remains OPEN.
         Cooling system turns back ON only after 3 continuous readings above this limit.
-    - temp < setpoint - tolerance:
-        Waits until 3 consecutive readings show that temperature has dropped below threshold
+    - temp <= setpoint - tolerance:
+        Waits until 3 consecutive readings show that temperature has reached or dropped below threshold
         before triggering heating system.
         Once triggered (or while heating mode is active):
         Heating valve ON (flow from heat), cooling & cooling valve OFF.
@@ -900,8 +900,8 @@ def applyTemperatureControl(
     global _heating_disabled_by_mixing, _cooling_disabled_by_mixing
     global _mix_consecutive_heat_disable, _mix_consecutive_heat_enable
     global _mix_consecutive_cool_disable, _mix_consecutive_cool_enable
-    high = setpoint + tolerance
-    low  = setpoint - tolerance
+    high = round(setpoint + tolerance, 4)
+    low  = round(setpoint - tolerance, 4)
 
     # Resolve secondary temperature if provided
     if secondary_temp is None:
@@ -913,7 +913,7 @@ def applyTemperatureControl(
     if not mainValveOpen:
         mainValve(True)
 
-    if temperature > high:
+    if round(temperature, 4) >= high:
         _temp_consecutive_high += 1
         _temp_consecutive_low = 0
 
@@ -935,10 +935,10 @@ def applyTemperatureControl(
             coolingValve(True)
             mainValve(True)
 
-            mix_cool_limit = setpoint - mixing_temp_limit
+            mix_cool_limit = round(setpoint - mixing_temp_limit, 4)
 
             if not _cooling_disabled_by_mixing:
-                if secondary_temp <= mix_cool_limit:
+                if round(secondary_temp, 4) <= mix_cool_limit:
                     _mix_consecutive_cool_disable += 1
                     _mix_consecutive_cool_enable = 0
                     if _mix_consecutive_cool_disable >= consecutive_required:
@@ -952,9 +952,9 @@ def applyTemperatureControl(
                 else:
                     _mix_consecutive_cool_disable = 0
                     coolingSystem(True)
-                    print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - cooling active (cooling valve ON, mixing tank {secondary_temp}C > {mix_cool_limit}C)")
+                    print(f"[CONTROL] Tank temp HIGH ({temperature}C >= {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - cooling active (cooling valve ON, mixing tank {secondary_temp}C > {mix_cool_limit}C)")
             else:
-                if secondary_temp > mix_cool_limit:
+                if round(secondary_temp, 4) > mix_cool_limit:
                     _mix_consecutive_cool_enable += 1
                     _mix_consecutive_cool_disable = 0
                     if _mix_consecutive_cool_enable >= consecutive_required:
@@ -970,7 +970,7 @@ def applyTemperatureControl(
                     coolingSystem(False)
                     print(f"[CONTROL] Cooling paused by mixing tank under-temp ({secondary_temp}C <= {mix_cool_limit}C) - cooling valve remains OPEN, mixing fan remains ON")
         else:
-            print(f"[CONTROL] Tank temp HIGH ({temperature}C > {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering cooling")
+            print(f"[CONTROL] Tank temp HIGH ({temperature}C >= {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering cooling")
             mainValve(True)
             if last_temp_system == "heating":
                 heatingValve(False)
@@ -979,7 +979,7 @@ def applyTemperatureControl(
                 coolingValve(False)
                 heatingValve(True)
 
-    elif temperature < low:
+    elif round(temperature, 4) <= low:
         _temp_consecutive_low += 1
         _temp_consecutive_high = 0
 
@@ -1001,10 +1001,10 @@ def applyTemperatureControl(
             heatingValve(True)
             mainValve(True)
 
-            mix_heat_limit = setpoint + mixing_temp_limit
+            mix_heat_limit = round(setpoint + mixing_temp_limit, 4)
 
             if not _heating_disabled_by_mixing:
-                if secondary_temp >= mix_heat_limit:
+                if round(secondary_temp, 4) >= mix_heat_limit:
                     _mix_consecutive_heat_disable += 1
                     _mix_consecutive_heat_enable = 0
                     if _mix_consecutive_heat_disable >= consecutive_required:
@@ -1018,9 +1018,9 @@ def applyTemperatureControl(
                 else:
                     _mix_consecutive_heat_disable = 0
                     heatingSystem(True)
-                    print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - activating heating (heating valve ON, mixing tank {secondary_temp}C < {mix_heat_limit}C)")
+                    print(f"[CONTROL] Tank temp LOW ({temperature}C <= {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - activating heating (heating valve ON, mixing tank {secondary_temp}C < {mix_heat_limit}C)")
             else:
-                if secondary_temp < mix_heat_limit:
+                if round(secondary_temp, 4) < mix_heat_limit:
                     _mix_consecutive_heat_enable += 1
                     _mix_consecutive_heat_disable = 0
                     if _mix_consecutive_heat_enable >= consecutive_required:
@@ -1036,7 +1036,7 @@ def applyTemperatureControl(
                     heatingSystem(False)
                     print(f"[CONTROL] Heating paused by mixing tank over-temp ({secondary_temp}C >= {mix_heat_limit}C) - heating valve remains OPEN, mixing fan remains ON")
         else:
-            print(f"[CONTROL] Tank temp LOW ({temperature}C < {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering heating")
+            print(f"[CONTROL] Tank temp LOW ({temperature}C <= {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering heating")
             mainValve(True)
             if last_temp_system == "heating":
                 heatingValve(False)
