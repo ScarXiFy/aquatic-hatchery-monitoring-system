@@ -25,18 +25,23 @@
     },
   };
 
+  function truncateToOneDecimal(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return "--";
+    }
+    const num = Number(value);
+    const sign = num < 0 ? -1 : 1;
+    const absNum = Math.abs(num);
+    const truncated = Math.floor(absNum * 10 + 1e-9) / 10;
+    return (sign * truncated).toFixed(1);
+  }
+
   function formatValue(metric, value, includeUnit = true) {
     const config = metrics[metric];
     if (!config || value === null || value === undefined || Number.isNaN(Number(value))) {
       return "--";
     }
-    let formatted;
-    const num = Number(value);
-    if (metric === "temperature") {
-      formatted = num % 1 === 0 ? num.toFixed(0) : num.toFixed(1);
-    } else {
-      formatted = num.toFixed(config.decimals);
-    }
+    const formatted = truncateToOneDecimal(value);
     return includeUnit && config.unit ? `${formatted} ${config.unit}` : formatted;
   }
 
@@ -251,12 +256,65 @@
     salinity: "Salinity",
   };
 
+  const STORAGE_KEY_ALERT_STATE = "hatchery:alert-state";
+  const STORAGE_KEY_ALERT_MINIMIZED = "hatchery:alert-minimized";
+  const STORAGE_KEY_METRIC_STATES = "hatchery:metric-states";
+  const STORAGE_KEY_DISMISSED_KEYS = "hatchery:dismissed-keys";
+  const STORAGE_KEY_DOCKED_TEXT = "hatchery:docked-text";
+
+  function getStoredItem(key) {
+    try {
+      return sessionStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setStoredItem(key, value) {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch (e) {}
+  }
+
+  function removeStoredItem(key) {
+    try {
+      sessionStorage.removeItem(key);
+    } catch (e) {}
+  }
+
   const previousMetricStates = {};
+  const storedMetricStates = getStoredItem(STORAGE_KEY_METRIC_STATES);
+  if (storedMetricStates) {
+    try {
+      Object.assign(previousMetricStates, JSON.parse(storedMetricStates));
+    } catch (e) {}
+  }
+
   const activeAlertsMap = new Map();
   const dismissedAlertKeys = new Set();
+  const storedDismissedKeys = getStoredItem(STORAGE_KEY_DISMISSED_KEYS);
+  if (storedDismissedKeys) {
+    try {
+      const parsed = JSON.parse(storedDismissedKeys);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((k) => dismissedAlertKeys.add(k));
+      }
+    } catch (e) {}
+  }
+
   let notificationHistory = [];
   let unreadCount = 0;
+
   let notificationSystemState = "dismissed"; // "overlay", "minimized", "dismissed"
+  const storedAlertState = getStoredItem(STORAGE_KEY_ALERT_STATE);
+  const storedMinimized = getStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
+  if (storedMinimized === "true" || storedAlertState === "minimized") {
+    notificationSystemState = "minimized";
+  } else if (storedAlertState === "overlay") {
+    notificationSystemState = "overlay";
+  } else if (storedAlertState === "dismissed") {
+    notificationSystemState = "dismissed";
+  }
 
   function formatTimestamp(isoOrDate) {
     const d = isoOrDate ? new Date(isoOrDate) : new Date();
@@ -388,6 +446,8 @@
     if (overlay) overlay.hidden = false;
     if (docked) docked.hidden = true;
     notificationSystemState = "overlay";
+    setStoredItem(STORAGE_KEY_ALERT_STATE, "overlay");
+    setStoredItem(STORAGE_KEY_ALERT_MINIMIZED, "false");
   }
 
   function minimizeOverlay() {
@@ -406,8 +466,11 @@
       } else {
         dockedText.textContent = "System Alert";
       }
+      setStoredItem(STORAGE_KEY_DOCKED_TEXT, dockedText.innerHTML);
     }
     notificationSystemState = "minimized";
+    setStoredItem(STORAGE_KEY_ALERT_STATE, "minimized");
+    setStoredItem(STORAGE_KEY_ALERT_MINIMIZED, "true");
   }
 
   function updateFloatingWidget() {
@@ -432,6 +495,10 @@
     }
 
     notificationSystemState = "dismissed";
+    setStoredItem(STORAGE_KEY_ALERT_STATE, "dismissed");
+    setStoredItem(STORAGE_KEY_ALERT_MINIMIZED, "false");
+    removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
+    setStoredItem(STORAGE_KEY_DISMISSED_KEYS, JSON.stringify(Array.from(dismissedAlertKeys)));
     loadNotificationsFromDB();
   }
 
@@ -537,6 +604,8 @@
       previousMetricStates[metric] = state;
     });
 
+    setStoredItem(STORAGE_KEY_METRIC_STATES, JSON.stringify(previousMetricStates));
+
     if (window.HatcherySound) {
       window.HatcherySound.updateAlarmState(activeAlertsMap);
     }
@@ -560,6 +629,10 @@
         hideAllAlertUI();
         notificationSystemState = "dismissed";
       }
+      removeStoredItem(STORAGE_KEY_ALERT_STATE);
+      removeStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
+      removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
+      removeStoredItem(STORAGE_KEY_DISMISSED_KEYS);
     }
   }
 
@@ -622,6 +695,18 @@
         e.stopPropagation();
         dismissOverlay();
       });
+    }
+
+    if (notificationSystemState === "minimized") {
+      const docked = document.getElementById("alert-docked-card");
+      const dockedText = document.getElementById("alert-docked-text");
+      const savedDockedText = getStoredItem(STORAGE_KEY_DOCKED_TEXT);
+      if (docked && savedDockedText) {
+        if (dockedText) {
+          dockedText.innerHTML = savedDockedText;
+        }
+        docked.hidden = false;
+      }
     }
 
     loadNotificationsFromDB();

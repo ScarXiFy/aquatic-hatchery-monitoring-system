@@ -16,6 +16,15 @@ function getGaugeDegrees(metric, value) {
   return Math.max(0, Math.min(260, ratio * 260));
 }
 
+function truncateToOneDecimal(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+  const num = Number(value);
+  const sign = num < 0 ? -1 : 1;
+  const absNum = Math.abs(num);
+  const truncated = Math.floor(absNum * 10 + 1e-9) / 10;
+  return (sign * truncated).toFixed(1);
+}
+
 function updateLiveCards(reading) {
   Object.keys(METRICS).forEach((metric) => {
     const value = document.getElementById(`${metric}-value`);
@@ -28,7 +37,7 @@ function updateLiveCards(reading) {
 
     const numericValue = Number(reading[metric]);
     const warning = isWarning(metric, numericValue);
-    value.textContent = Number(numericValue).toFixed(METRICS[metric].decimals);
+    value.textContent = truncateToOneDecimal(numericValue);
     status.textContent = warning ? "Warning" : "Optimal";
     status.classList.toggle("warning", warning);
     status.classList.toggle("neutral", false);

@@ -16,7 +16,7 @@
       color: "#8b5cf6",
       min: 0,
       max: 14,
-      decimals: 0,
+      decimals: 1,
     },
     dissolved_oxygen: {
       label: "Dissolved Oxygen",
@@ -131,10 +131,19 @@
     Chart.register(thresholdBandPlugin);
   }
 
+  function truncateToOneDecimal(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+    const num = Number(value);
+    const sign = num < 0 ? -1 : 1;
+    const absNum = Math.abs(num);
+    const truncated = Math.floor(absNum * 10 + 1e-9) / 10;
+    return (sign * truncated).toFixed(1);
+  }
+
   function formatValue(metric, value) {
     const config = metrics[metric];
     if (!config || value === null || value === undefined || Number.isNaN(Number(value))) return "--";
-    const formatted = Number(value).toFixed(config.decimals);
+    const formatted = truncateToOneDecimal(value);
     return config.unit ? `${formatted} ${config.unit}` : formatted;
   }
 
@@ -354,7 +363,7 @@
       if (valueEl) {
         valueEl.textContent =
           current !== null && !Number.isNaN(current)
-            ? Number(current).toFixed(config.decimals)
+            ? truncateToOneDecimal(current)
             : "--";
       }
 
