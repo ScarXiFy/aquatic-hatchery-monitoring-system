@@ -73,6 +73,18 @@ class TestPeltierCoolingFans(unittest.TestCase):
             mock_gpio.output.assert_any_call(piUtils.pel3Pin, 1)
             mock_gpio.output.assert_any_call(piUtils.pel4Pin, 1)
 
+    def test_peltier_and_fans_initialized_to_off_high(self):
+        """Verify peltier elements and fans are configured to initialize to GPIO.HIGH (inactive/OFF)."""
+        import inspect
+        source = inspect.getsource(piUtils)
+        self.assertIn("GPIO.setup(pel1Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertIn("GPIO.setup(pel2Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertIn("GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertIn("GPIO.setup(pel4Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertIn("GPIO.setup(fan1Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertIn("GPIO.setup(fan2Pin, GPIO.OUT, initial=GPIO.HIGH)", source)
+        self.assertFalse(piUtils.coolingSystemActive)
+
     def test_cleanup_gpio_turns_off_cooling_system_and_fans(self):
         """cleanupGpio ensures both fans (GPIO 1 and 15) and peltiers are turned off on shutdown."""
         mock_gpio = MagicMock()

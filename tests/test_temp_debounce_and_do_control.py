@@ -268,6 +268,183 @@ class TestTempDebounceAndDoControl(unittest.TestCase):
         self.assertFalse(piUtils.coolingSystemActive)
         self.assertEqual(piUtils._temp_consecutive_high, 0)
         self.assertEqual(piUtils._temp_consecutive_low, 0)
+        self.assertFalse(piUtils._heating_disabled_by_mixing)
+        self.assertFalse(piUtils._cooling_disabled_by_mixing)
+
+    # -------------------------------------------------------------------------
+    # 4. MIXING TANK TEMPERATURE CONTROL TESTS
+    # -------------------------------------------------------------------------
+    def test_heating_mixing_tank_overtemp_disables_heating_while_valve_remains_open(self):
+        """
+        When heating is enabled, if mixing tank reaches >= setpoint + 2.0 C,
+        it must wait for 3 consecutive readings before disabling heating.
+        The heating valve must remain OPEN while heating is disabled.
+        """
+        # Trigger heating mode (setpoint = 26.0, threshold = 25.5, mixing limit = 28.0)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=25.0)
+        self.assertTrue(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+
+        # Over-temp reading 1: mixing tank = 28.0 C (>= 28.0 C) -> heating still active (1/3)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.0)
+        self.assertTrue(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_disable, 1)
+
+        # Over-temp reading 2: mixing tank = 28.2 C -> heating still active (2/3)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.2)
+        self.assertTrue(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_disable, 2)
+
+        # Fluctuation below 28.0 C -> resets over-temp counter
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.5)
+        self.assertTrue(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_disable, 0)
+
+        # 3 continuous over-temp readings: 28.1, 28.3, 28.0
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.1)
+        self.assertTrue(piUtils.heatingSystemActive)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.3)
+        self.assertTrue(piUtils.heatingSystemActive)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.0)
+
+        # On the 3rd continuous reading, heating system is DISABLED, but heating valve remains OPEN
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertTrue(piUtils._heating_disabled_by_mixing)
+
+    def test_heating_mixing_tank_recovery_reenables_heating(self):
+        """
+        When heating is disabled due to mixing tank over-temp, it must wait for
+        3 consecutive readings below setpoint + 2.0 C before re-enabling heating.
+        """
+        # Trigger heating mode and then disable it with 3 over-temp readings
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=25.0)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.2)
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertTrue(piUtils._heating_disabled_by_mixing)
+
+        # Recovery reading 1: mixing tank = 27.8 C (< 28.0 C) -> heating still disabled (1/3)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.8)
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_enable, 1)
+
+        # Recovery reading 2: mixing tank = 27.7 C -> heating still disabled (2/3)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.7)
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_enable, 2)
+
+        # Fluctuation back above limit (28.1 C) -> resets recovery counter
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=28.1)
+        self.assertFalse(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_heat_enable, 0)
+
+        # 3 continuous recovery readings: 27.5, 27.6, 27.4
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.5)
+        self.assertFalse(piUtils.heatingSystemActive)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.6)
+        self.assertFalse(piUtils.heatingSystemActive)
+        piUtils.applyTemperatureControl(temperature=24.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.4)
+
+        # On the 3rd continuous reading, heating system is RE-ENABLED
+        self.assertTrue(piUtils.heatingSystemActive)
+        self.assertTrue(piUtils.heatingValveOpen)
+        self.assertFalse(piUtils._heating_disabled_by_mixing)
+
+    def test_cooling_mixing_tank_undertemp_disables_cooling_while_valve_remains_open(self):
+        """
+        When cooling is enabled, if mixing tank reaches <= setpoint - 2.0 C,
+        it must wait for 3 consecutive readings before disabling cooling.
+        The cooling valve must remain OPEN while cooling is disabled.
+        """
+        # Trigger cooling mode (setpoint = 26.0, threshold = 26.5, mixing limit = 24.0)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.0)
+        self.assertTrue(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+
+        # Under-temp reading 1: mixing tank = 24.0 C (<= 24.0 C) -> cooling still active (1/3)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.0)
+        self.assertTrue(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_disable, 1)
+
+        # Under-temp reading 2: mixing tank = 23.8 C -> cooling still active (2/3)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.8)
+        self.assertTrue(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_disable, 2)
+
+        # Fluctuation above 24.0 C -> resets under-temp counter
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.5)
+        self.assertTrue(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_disable, 0)
+
+        # 3 continuous under-temp readings: 23.9, 23.7, 24.0
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.9)
+        self.assertTrue(piUtils.coolingSystemActive)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.7)
+        self.assertTrue(piUtils.coolingSystemActive)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.0)
+
+        # On the 3rd continuous reading, cooling system is DISABLED, but cooling valve remains OPEN
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertTrue(piUtils._cooling_disabled_by_mixing)
+
+    def test_cooling_mixing_tank_recovery_reenables_cooling(self):
+        """
+        When cooling is disabled due to mixing tank under-temp, it must wait for
+        3 consecutive readings above setpoint - 2.0 C before re-enabling cooling.
+        """
+        # Trigger cooling mode and disable it with 3 under-temp readings
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=27.0)
+        for _ in range(3):
+            piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.5)
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertTrue(piUtils._cooling_disabled_by_mixing)
+
+        # Recovery reading 1: mixing tank = 24.2 C (> 24.0 C) -> cooling still disabled (1/3)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.2)
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_enable, 1)
+
+        # Recovery reading 2: mixing tank = 24.4 C -> cooling still disabled (2/3)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.4)
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_enable, 2)
+
+        # Fluctuation back below limit (23.8 C) -> resets recovery counter
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=23.8)
+        self.assertFalse(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertEqual(piUtils._mix_consecutive_cool_enable, 0)
+
+        # 3 continuous recovery readings: 24.3, 24.5, 24.6
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.3)
+        self.assertFalse(piUtils.coolingSystemActive)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.5)
+        self.assertFalse(piUtils.coolingSystemActive)
+        piUtils.applyTemperatureControl(temperature=28.0, setpoint=26.0, tolerance=0.5, secondary_temp=24.6)
+
+        # On the 3rd continuous reading, cooling system is RE-ENABLED
+        self.assertTrue(piUtils.coolingSystemActive)
+        self.assertTrue(piUtils.coolingValveOpen)
+        self.assertFalse(piUtils._cooling_disabled_by_mixing)
 
 
 if __name__ == "__main__":
