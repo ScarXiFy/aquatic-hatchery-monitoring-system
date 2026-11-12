@@ -64,6 +64,7 @@ class TestRunBrowser(unittest.TestCase):
         cmd = mock_popen.call_args[0][0]
         self.assertEqual(cmd[0], "/usr/bin/chromium-browser")
         self.assertIn("--start-maximized", cmd)
+        self.assertIn("--start-fullscreen", cmd)
         self.assertIn("http://localhost:5050", cmd)
         self.assertTrue(mock_popen.call_args[1].get("start_new_session"))
 
@@ -80,6 +81,7 @@ class TestRunBrowser(unittest.TestCase):
         cmd = mock_popen.call_args[0][0]
         self.assertIn("--kiosk", cmd)
         self.assertNotIn("--start-maximized", cmd)
+        self.assertNotIn("--start-fullscreen", cmd)
 
     @patch("run.wait_for_server", return_value=True)
     @patch("run.shutil.which", return_value="/usr/bin/chromium-browser")
@@ -95,13 +97,27 @@ class TestRunBrowser(unittest.TestCase):
         self.assertIn("--no-sandbox", cmd)
 
     @patch("run.wait_for_server", return_value=True)
-    @patch("run.shutil.which", return_value=None)
+    @patch("run.find_browser_binary", return_value=None)
     @patch("run.webbrowser.open")
-    def test_open_browser_fallback_webbrowser(self, mock_webbrowser_open, mock_which, mock_wait):
+    def test_open_browser_fallback_webbrowser(self, mock_webbrowser_open, mock_find, mock_wait):
         with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_webbrowser_open.assert_called_once_with("http://localhost:5050")
+
+    @patch("run.wait_for_server", return_value=True)
+    @patch("run.find_browser_binary", return_value="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    @patch("run.subprocess.Popen")
+    def test_open_browser_maximized_fullscreen_chrome(self, mock_popen, mock_find, mock_wait):
+        with patch.dict(os.environ, {"BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
+            run.open_browser("http://localhost:5050")
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        self.assertEqual(cmd[0], "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        self.assertIn("--start-maximized", cmd)
+        self.assertIn("--start-fullscreen", cmd)
+        self.assertIn("http://localhost:5050", cmd)
 
     @patch("run.threading.Thread")
     def test_start_browser_thread_enabled(self, mock_thread_cls):
@@ -146,9 +162,9 @@ class TestRunBrowser(unittest.TestCase):
         mock_webbrowser_open.assert_not_called()
 
     @patch("run.wait_for_server", return_value=True)
-    @patch("run.shutil.which", return_value=None)
+    @patch("run.find_browser_binary", return_value=None)
     @patch("run.webbrowser.open")
-    def test_open_browser_force_new_tab_flag_bypasses_existing_check(self, mock_webbrowser_open, mock_which, mock_wait):
+    def test_open_browser_force_new_tab_flag_bypasses_existing_check(self, mock_webbrowser_open, mock_find, mock_wait):
         """Passing --new-tab opens browser even if an existing client tab is connected."""
         notify_client_connected()
         sys.argv.append("--new-tab")

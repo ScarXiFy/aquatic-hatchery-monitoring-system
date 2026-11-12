@@ -73,7 +73,7 @@
       if (min === max) {
         // Temperature and DO: setpoint tracking
         const limit = max;
-        const warning_limit = 0.5; // Warning threshold is +-0.5 from setpoint for temperature and DO
+        const warning_limit = metric === "temperature" ? 1.0 : 0.5; // Warning threshold is +-1.0 from setpoint for temperature and +-0.5 for DO
         const critical_limit = metric === "temperature" ? 2.0 : 1.0;
 
         const optTop = yScale.getPixelForValue(limit + warning_limit);
@@ -174,7 +174,7 @@
 
     if (min === max) {
       const limit = max;
-      const warning_limit = 0.5; // Warning threshold is +-0.5 from setpoint for temperature and DO
+      const warning_limit = metric === "temperature" ? 1.0 : 0.5; // Warning threshold is +-1.0 from setpoint for temperature and +-0.5 for DO
       const critical_limit = metric === "temperature" ? 2.0 : 1.0;
       const diff = Math.abs(v - limit);
       if (diff >= critical_limit) {

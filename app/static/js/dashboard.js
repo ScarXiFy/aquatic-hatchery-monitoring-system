@@ -87,7 +87,7 @@
 
     if (min === max) {
       const limit = max;
-      const warning_limit = 0.5; // Warning alert appears at +-0.5 from setpoint for temperature and DO
+      const warning_limit = metric === "temperature" ? 1.0 : 0.5; // Warning alert appears at +-1.0 from setpoint for temperature and +-0.5 for DO
       const critical_limit = metric === "temperature" ? 2.0 : 1.0;
       const diff = Math.abs(v - limit);
       if (diff >= critical_limit) {
@@ -1263,12 +1263,52 @@
     updateNav(0);
   }
 
+  function bindFullscreenUI() {
+    const btn = document.getElementById("fullscreen-toggle-btn");
+    if (!btn) return;
+
+    function updateFullscreenIcon() {
+      const isFullscreen = Boolean(document.fullscreenElement);
+      btn.title = isFullscreen ? "Exit fullscreen" : "Toggle fullscreen";
+      btn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Toggle fullscreen");
+      const wrap = btn.querySelector(".fullscreen-icon-wrap");
+      if (wrap) {
+        wrap.innerHTML = isFullscreen
+          ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
+            </svg>`
+          : `<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+            </svg>`;
+      }
+    }
+
+    btn.addEventListener("click", () => {
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch((err) => {
+            console.warn("[FULLSCREEN] Error entering fullscreen:", err);
+          });
+        }
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch((err) => {
+            console.warn("[FULLSCREEN] Error exiting fullscreen:", err);
+          });
+        }
+      }
+    });
+
+    document.addEventListener("fullscreenchange", updateFullscreenIcon);
+  }
+
   document.addEventListener("DOMContentLoaded", () => {
     updateDateTime();
     setInterval(updateDateTime, 30000);
     bindControls();
     initializeHomeSlider();
     bindNotificationUI();
+    bindFullscreenUI();
     loadControls()
       .then(loadThresholds)
       .then(loadLatestReading);

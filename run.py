@@ -27,9 +27,50 @@ def wait_for_server(url, timeout=15):
     return False
 
 
+def find_browser_binary():
+    """
+    Finds a Chromium or Chrome binary across Linux/Raspberry Pi, macOS, and Windows.
+    Returns the executable path if found, or None.
+    """
+    # 1. Common Linux / Raspberry Pi / system PATH executables
+    for name in ("chromium-browser", "chromium", "google-chrome", "google-chrome-stable", "chrome"):
+        path = shutil.which(name)
+        if path:
+            return path
+
+    # 2. macOS application bundles
+    if sys.platform == "darwin":
+        mac_paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            os.path.expanduser("~/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+            os.path.expanduser("~/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"),
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            os.path.expanduser("~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+        ]
+        for path in mac_paths:
+            if os.path.exists(path):
+                return path
+
+    # 3. Windows Program Files locations
+    if sys.platform == "win32":
+        win_paths = [
+            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "Application", "chrome.exe"),
+        ]
+        for path in win_paths:
+            if os.path.exists(path):
+                return path
+
+    return None
+
+
 def open_browser(url="http://localhost:5050", client_timeout=2.0):
     """
-    Automatically opens the dashboard URL on the Raspberry Pi display.
+    Automatically opens the dashboard URL in maximized/fullscreen mode on the display.
     Configures environment variables (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR)
     so the browser opens properly whether executed directly from desktop,
     SSH, or a startup service.
@@ -50,7 +91,7 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
             print(f"[BROWSER] Existing web app tab detected for {url}. Reusing already open tab.")
             return
 
-    # Set up display environment variables for GUI on the RPi display
+    # Set up display environment variables for GUI on the display
     env = os.environ.copy()
     if "DISPLAY" not in env and "WAYLAND_DISPLAY" not in env:
         env["DISPLAY"] = ":0"
@@ -70,11 +111,11 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
 
     kiosk_mode = "--kiosk" in sys.argv or os.environ.get("KIOSK", "0").lower() in ("1", "true")
 
-    # On Linux / Raspberry Pi, prefer Chromium (the standard RPi browser)
-    chromium_bin = shutil.which("chromium-browser") or shutil.which("chromium")
-    if chromium_bin and sys.platform.startswith("linux"):
+    # Prefer Chromium / Chrome across platforms for maximized/fullscreen support
+    browser_bin = find_browser_binary()
+    if browser_bin:
         cmd = [
-            chromium_bin,
+            browser_bin,
             "--no-first-run",
             "--disable-restore-session-state",
             "--disable-infobars",
@@ -87,11 +128,12 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
             cmd.append("--kiosk")
         else:
             cmd.append("--start-maximized")
+            cmd.append("--start-fullscreen")
 
         cmd.append(url)
 
         try:
-            print(f"[BROWSER] Launching {url} on RPi display with Chromium...")
+            print(f"[BROWSER] Launching {url} in maximized/fullscreen mode with {os.path.basename(browser_bin)}...")
             subprocess.Popen(
                 cmd,
                 env=env,
@@ -101,7 +143,7 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
             )
             return
         except Exception as e:
-            print(f"[BROWSER] Chromium direct launch failed ({e}), falling back to default browser...")
+            print(f"[BROWSER] Direct browser launch failed ({e}), falling back to default browser...")
 
     # Fallback to standard Python webbrowser (cross-platform, works on Mac/Windows/Linux)
     try:

@@ -6,7 +6,13 @@ function getThreshold(metric) {
 
 function isWarning(metric, value) {
   const threshold = getThreshold(metric);
-  return Boolean(threshold && (value < threshold.min_value || value > threshold.max_value));
+  if (!threshold) return false;
+  if (threshold.min_value === threshold.max_value) {
+    const limit = threshold.max_value;
+    const warning_limit = metric === "temperature" ? 1.0 : 0.5;
+    return Math.abs(value - limit) >= warning_limit;
+  }
+  return Boolean(value < threshold.min_value || value > threshold.max_value);
 }
 
 function getGaugeDegrees(metric, value) {
