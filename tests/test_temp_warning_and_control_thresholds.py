@@ -64,14 +64,29 @@ class TestTempWarningAndControlThresholds(unittest.TestCase):
         self.assertIn('cmd.append("--start-maximized")', content)
         self.assertIn('cmd.append("--start-fullscreen")', content)
 
-    def test_base_html_has_fullscreen_toggle_button(self):
+    def test_salinity_freshwater_zero_threshold_in_dashboard_and_charts(self):
         """
-        Verify that base.html includes the fullscreen toggle button.
+        Verify that dashboard.js and charts.js treat minimum salinity of 0 (freshwater)
+        as optimal near zero rather than triggering a lower buffer warning.
+        """
+        dashboard_js_path = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "dashboard.js"
+        dash_content = dashboard_js_path.read_text()
+        self.assertIn("metric === \"salinity\" && min <= 0", dash_content)
+
+        charts_js_path = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "charts.js"
+        charts_content = charts_js_path.read_text()
+        self.assertIn("metric === \"salinity\" && min <= 0", charts_content)
+
+    def test_base_html_has_responsive_brand_and_notification_btn(self):
+        """
+        Verify that base.html includes responsive brand titles and notification bell.
         """
         base_html_path = Path(__file__).resolve().parent.parent / "app" / "templates" / "base.html"
         content = base_html_path.read_text()
 
-        self.assertIn('id="fullscreen-toggle-btn"', content)
+        self.assertIn('class="brand-full"', content)
+        self.assertIn('class="brand-short"', content)
+        self.assertIn('id="notification-bell-btn"', content)
 
 
 if __name__ == "__main__":

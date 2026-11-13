@@ -103,7 +103,10 @@
       if (v < min || v > max) {
         return "critical";
       }
-      if (v <= min + buffer || v >= max - buffer) {
+      const isSalinityZeroMin = metric === "salinity" && min <= 0;
+      const lowerWarning = !isSalinityZeroMin && v <= min + buffer;
+      const upperWarning = v >= max - buffer;
+      if (lowerWarning || upperWarning) {
         return "warning";
       }
       return "optimal";

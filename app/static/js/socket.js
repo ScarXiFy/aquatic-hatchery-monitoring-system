@@ -12,6 +12,9 @@ function isWarning(metric, value) {
     const warning_limit = metric === "temperature" ? 1.0 : 0.5;
     return Math.abs(value - limit) >= warning_limit;
   }
+  if (metric === "salinity" && threshold.min_value <= 0) {
+    return Boolean(value < threshold.min_value || value > threshold.max_value);
+  }
   return Boolean(value < threshold.min_value || value > threshold.max_value);
 }
 

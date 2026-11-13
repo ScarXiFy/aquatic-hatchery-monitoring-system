@@ -99,20 +99,25 @@
         const range = max - min;
         const buffer = range * 0.10;
 
+        const isSalinityZeroMin = metric === "salinity" && min <= 0;
         const optTop = yScale.getPixelForValue(max - buffer);
-        const optBottom = yScale.getPixelForValue(min + buffer);
+        const optBottom = isSalinityZeroMin
+          ? yScale.getPixelForValue(min)
+          : yScale.getPixelForValue(min + buffer);
         const limitTop = yScale.getPixelForValue(max);
         const limitBottom = yScale.getPixelForValue(min);
 
-        // Green zone: between min + buffer and max - buffer
+        // Green zone: between optBottom and optTop
         ctx.fillStyle = "rgba(16, 185, 129, 0.12)";
         ctx.fillRect(chartArea.left, optTop, chartArea.right - chartArea.left, optBottom - optTop);
 
         // Yellow warning zones:
-        // Lower warning: between min and min + buffer
+        // Lower warning: between min and min + buffer (omitted if salinity min is 0 / freshwater)
         // Upper warning: between max - buffer and max
         ctx.fillStyle = "rgba(245, 158, 11, 0.22)";
-        ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
+        if (!isSalinityZeroMin) {
+          ctx.fillRect(chartArea.left, optBottom, chartArea.right - chartArea.left, limitBottom - optBottom);
+        }
         ctx.fillRect(chartArea.left, limitTop, chartArea.right - chartArea.left, optTop - limitTop);
 
         // Red critical zones:
@@ -190,7 +195,10 @@
       if (v < min || v > max) {
         return "critical";
       }
-      if (v <= min + buffer || v >= max - buffer) {
+      const isSalinityZeroMin = metric === "salinity" && min <= 0;
+      const lowerWarning = !isSalinityZeroMin && v <= min + buffer;
+      const upperWarning = v >= max - buffer;
+      if (lowerWarning || upperWarning) {
         return "warning";
       }
       return "optimal";
