@@ -649,9 +649,14 @@
 
   async function loadHistory(range = "day") {
     currentRange = range;
-    const response = await fetch(`/api/readings/history?range=${range}`);
-    const payload = await response.json();
-    setChartData(payload.readings || []);
+    try {
+      const response = await fetch(`/api/readings/history?range=${range}`);
+      if (!response.ok) return;
+      const payload = await response.json();
+      setChartData(payload.readings || []);
+    } catch (e) {
+      console.warn("[CHARTS] Failed to load history:", e);
+    }
   }
 
   function initializeCharts() {
@@ -687,6 +692,13 @@
     const points = summarizeHistory(currentReadings, currentRange);
     updateKpiCards(points);
     updateChartStatusBadges(points);
+  });
+
+  window.addEventListener("hatchery:socket-connected", () => {
+    if (Object.keys(charts).length) {
+      loadThresholds();
+      loadHistory(currentRange);
+    }
   });
 
   function updateElapsedTimes() {

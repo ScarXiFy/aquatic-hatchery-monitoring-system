@@ -798,11 +798,18 @@
   }
 
   async function loadThresholds() {
-    const response = await fetch("/api/thresholds");
-    const payload = await response.json();
-    thresholds = payload.thresholds || [];
-    renderThresholds();
-    window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+    try {
+      const response = await fetch("/api/thresholds");
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      thresholds = payload.thresholds || [];
+      renderThresholds();
+      window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+    } catch (e) {
+      console.warn("[DASHBOARD] Failed to load thresholds:", e);
+    }
   }
 
   function isEditingThresholds() {
@@ -838,54 +845,81 @@
   }
 
   async function loadControls() {
-    const response = await fetch("/api/controls");
-    const payload = await response.json();
-    if (payload.sliders) {
-      updateSliders(payload.sliders);
-    }
-    if (payload.valves) {
-      document.querySelectorAll("[data-valve]").forEach((button) => {
-        const v = button.dataset.valve;
-        if (v in payload.valves) {
-          const isOpen = Boolean(payload.valves[v]);
-          button.setAttribute("aria-pressed", String(isOpen));
-          button.innerHTML = `<i></i> ${isOpen ? "Open" : "Closed"}`;
-        }
-      });
+    try {
+      const response = await fetch("/api/controls");
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      if (payload.sliders) {
+        updateSliders(payload.sliders);
+      }
+      if (payload.valves) {
+        document.querySelectorAll("[data-valve]").forEach((button) => {
+          const v = button.dataset.valve;
+          if (v in payload.valves) {
+            const isOpen = Boolean(payload.valves[v]);
+            button.setAttribute("aria-pressed", String(isOpen));
+            button.innerHTML = `<i></i> ${isOpen ? "Open" : "Closed"}`;
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("[DASHBOARD] Failed to load controls:", e);
     }
   }
 
   async function loadLatestReading() {
-    const response = await fetch("/api/readings/latest");
-    const payload = await response.json();
-    if (payload.reading) {
-      updateGauges(payload.reading);
+    try {
+      const response = await fetch("/api/readings/latest");
+      if (!response.ok) {
+        return;
+      }
+      const payload = await response.json();
+      if (payload.reading) {
+        updateGauges(payload.reading);
+      }
+    } catch (e) {
+      console.warn("[DASHBOARD] Failed to load latest reading:", e);
     }
   }
 
   async function loadDayHistory() {
-    const response = await fetch("/api/readings/trend");
-    const payload = await response.json();
-    dayHistory = payload.readings || [];
-    const trendDate = payload.date;
-
-    // Update trend section label to show which day the averages are from
     const trendHeading = document.getElementById("trend-date-label");
-    if (trendHeading) {
-      if (trendDate) {
-        const d = new Date(trendDate + "T00:00:00");
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const isYesterday = d.toDateString() === yesterday.toDateString();
-        trendHeading.textContent = isYesterday
-          ? "Yesterday's averages"
-          : `Averages from ${d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
-      } else {
+    try {
+      const response = await fetch("/api/readings/trend");
+      if (!response.ok) {
+        if (trendHeading) {
+          trendHeading.textContent = "No previous readings found";
+        }
+        return;
+      }
+      const payload = await response.json();
+      dayHistory = payload.readings || [];
+      const trendDate = payload.date;
+
+      // Update trend section label to show which day the averages are from
+      if (trendHeading) {
+        if (trendDate) {
+          const d = new Date(trendDate + "T00:00:00");
+          const yesterday = new Date();
+          yesterday.setDate(yesterday.getDate() - 1);
+          const isYesterday = d.toDateString() === yesterday.toDateString();
+          trendHeading.textContent = isYesterday
+            ? "Yesterday's averages"
+            : `Averages from ${d.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}`;
+        } else {
+          trendHeading.textContent = "No previous readings found";
+        }
+      }
+
+      renderTrends();
+    } catch (e) {
+      if (trendHeading) {
         trendHeading.textContent = "No previous readings found";
       }
+      console.warn("[DASHBOARD] Failed to load day history:", e);
     }
-
-    renderTrends();
   }
 
   function millisecondsUntilNextMidnight() {
@@ -1105,13 +1139,28 @@
     }
 
     socketBound = true;
+    socket.on("server_ready", (data) => {
+      const prevBoot = sessionStorage.getItem("hatchery:server_boot");
+      if (data && data.boot_id) {
+        const newBoot = String(data.boot_id);
+        if (prevBoot && prevBoot !== newBoot) {
+          sessionStorage.setItem("hatchery:server_boot", newBoot);
+          window.location.reload();
+          return;
+        }
+        sessionStorage.setItem("hatchery:server_boot", newBoot);
+      }
+    });
     socket.on("connect", () => {
       updateSocketStatus(true);
-      if (hasSocketConnected && !isEditingThresholds()) {
+      window.dispatchEvent(new CustomEvent("hatchery:socket-connected"));
+      if (!isEditingThresholds()) {
         loadThresholds();
       }
       loadControls();
       loadLatestReading();
+      loadDayHistory();
+      loadNotificationsFromDB();
       hasSocketConnected = true;
     });
     socket.on("disconnect", () => updateSocketStatus(false));
@@ -1312,10 +1361,13 @@
     initializeHomeSlider();
     bindNotificationUI();
     bindFullscreenUI();
-    loadControls()
-      .then(loadThresholds)
-      .then(loadLatestReading);
-    loadDayHistory().then(scheduleMidnightTrendRefresh);
+    Promise.allSettled([
+      loadControls(),
+      loadThresholds(),
+      loadLatestReading(),
+      loadDayHistory(),
+      loadNotificationsFromDB(),
+    ]).then(scheduleMidnightTrendRefresh);
     bindSocket();
   });
 })();

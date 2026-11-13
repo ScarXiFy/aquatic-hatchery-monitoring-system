@@ -1,9 +1,11 @@
 import threading
+import time
 from flask import current_app, request
 
 from app.sensors.simulator import start_sensor_simulator
 from app.api.piUtils import initializeBleedValveMotor, initializeLed, mainValve
 
+SERVER_BOOT_TIME = time.time()
 _simulator_started = False
 connected_clients = set()
 client_connected_event = threading.Event()
@@ -41,6 +43,7 @@ def register_socketio_events(socketio):
         sid = getattr(request, "sid", None) or "client"
         connected_clients.add(sid)
         notify_client_connected()
+        socketio.emit("server_ready", {"boot_id": SERVER_BOOT_TIME}, to=sid)
         start_background_simulator(socketio)
 
     @socketio.on("disconnect")

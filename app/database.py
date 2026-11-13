@@ -6,8 +6,17 @@ from flask import current_app, g
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(current_app.config["DATABASE"])
+        g.db = sqlite3.connect(
+            current_app.config["DATABASE"],
+            timeout=30.0,
+            check_same_thread=False,
+        )
         g.db.row_factory = sqlite3.Row
+        try:
+            g.db.execute("PRAGMA journal_mode=WAL")
+            g.db.execute("PRAGMA synchronous=NORMAL")
+        except Exception:
+            pass
     return g.db
 
 

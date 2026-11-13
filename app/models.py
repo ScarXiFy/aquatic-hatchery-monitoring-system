@@ -100,13 +100,13 @@ def get_history(range_name="day", mode="last_24h"):
         """
         SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph
         FROM sensor_readings
-        WHERE datetime(timestamp) >= datetime(?)
-          AND datetime(timestamp) <= datetime(?)
+        WHERE timestamp >= ?
+          AND timestamp <= ?
           AND temperature IS NOT NULL AND temperature != ''
           AND dissolved_oxygen IS NOT NULL AND dissolved_oxygen != ''
           AND salinity IS NOT NULL AND salinity != ''
           AND ph IS NOT NULL AND ph != ''
-        ORDER BY datetime(timestamp) ASC, id ASC
+        ORDER BY timestamp ASC, id ASC
         """,
         (start_str, end_str),
     ).fetchall()
@@ -116,38 +116,62 @@ def get_history(range_name="day", mode="last_24h"):
 def get_yesterday_or_last_day():
     """
     Return all readings from yesterday (local time).
-    If yesterday has no data, walk back day by day (up to 7 days)
+    If yesterday has no data, look back using indexed queries (up to 30 days)
     until a day with readings is found. Returns an empty list if none found.
     """
     local_now = datetime.now().astimezone()
     db = get_db()
 
-    for days_back in range(1, 31):
-        target_date = (local_now - timedelta(days=days_back)).date()
-        start_local = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=local_now.tzinfo)
-        end_local   = datetime.combine(target_date, datetime.max.time()).replace(tzinfo=local_now.tzinfo)
-        start_str = start_local.astimezone(timezone.utc).isoformat(timespec="seconds")
-        end_str   = end_local.astimezone(timezone.utc).isoformat(timespec="seconds")
+    today_start_local = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    today_start_utc = today_start_local.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-        rows = db.execute(
-            """
-            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph
-            FROM sensor_readings
-            WHERE datetime(timestamp) >= datetime(?)
-              AND datetime(timestamp) <= datetime(?)
-              AND temperature IS NOT NULL AND temperature != ''
-              AND dissolved_oxygen IS NOT NULL AND dissolved_oxygen != ''
-              AND salinity IS NOT NULL AND salinity != ''
-              AND ph IS NOT NULL AND ph != ''
-            ORDER BY datetime(timestamp) ASC, id ASC
-            """,
-            (start_str, end_str),
-        ).fetchall()
+    cutoff_local = datetime.combine(local_now.date() - timedelta(days=30), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    cutoff_utc = cutoff_local.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-        if rows:
-            return [row_to_reading(row) for row in rows], target_date
+    latest_prior_row = db.execute(
+        """
+        SELECT timestamp FROM sensor_readings
+        WHERE timestamp >= ? AND timestamp < ?
+          AND temperature IS NOT NULL AND temperature != ''
+        ORDER BY timestamp DESC
+        LIMIT 1
+        """,
+        (cutoff_utc, today_start_utc),
+    ).fetchone()
 
-    return [], None
+    if not latest_prior_row:
+        return [], None
+
+    ts_str = latest_prior_row["timestamp"]
+    try:
+        reading_dt = datetime.fromisoformat(ts_str)
+        if reading_dt.tzinfo is None:
+            reading_dt = reading_dt.replace(tzinfo=timezone.utc)
+        target_date = reading_dt.astimezone(local_now.tzinfo).date()
+    except Exception:
+        return [], None
+
+    start_local = datetime.combine(target_date, datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    end_local   = datetime.combine(target_date, datetime.max.time()).replace(tzinfo=local_now.tzinfo)
+    start_str = start_local.astimezone(timezone.utc).isoformat(timespec="seconds")
+    end_str   = end_local.astimezone(timezone.utc).isoformat(timespec="seconds")
+
+    rows = db.execute(
+        """
+        SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph
+        FROM sensor_readings
+        WHERE timestamp >= ?
+          AND timestamp <= ?
+          AND temperature IS NOT NULL AND temperature != ''
+          AND dissolved_oxygen IS NOT NULL AND dissolved_oxygen != ''
+          AND salinity IS NOT NULL AND salinity != ''
+          AND ph IS NOT NULL AND ph != ''
+        ORDER BY timestamp ASC, id ASC
+        """,
+        (start_str, end_str),
+    ).fetchall()
+
+    return [row_to_reading(row) for row in rows], target_date
 
 
 def get_control_settings():
