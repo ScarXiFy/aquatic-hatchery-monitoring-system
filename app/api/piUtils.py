@@ -9,25 +9,54 @@ HEATER_PULSE_DURATION = 5.0       # Duration in seconds the heater stays ON per 
 HEATER_CHECK_INTERVAL = 15.0      # Wait time in seconds between heating checks/pulses
 MIXER_SHUTDOWN_DELAY = 10.0       # Run-on time in seconds for mixer after cooling/heating stops
 
-# TEMPORARY PIN PLACEMENTS
-sourceValvePin = 8
-#drainValvePin = 5
-
-# Temperature control pins
-#coolingSystemPin = 5
-coolingValvePin = 25
+# Heating system relay & Mixer motor pins
 heatingSystemPin = 26
-heatingValvePin = 23
-mainValvePin = 24
+mixerPin = 5
+
+# Peltier cooling pins (8 cooling peltier modules)
 pel1Pin = 12
 pel2Pin = 16
 pel3Pin = 20
 pel4Pin = 21
-fan1Pin = 1
-fan2Pin = 15
-#fan3Pin = 20
-#fan4Pin = 21
-mixerPin = 5
+pel5Pin = 14
+pel6Pin = 15
+pel7Pin = 7
+pel8Pin = 1
+PELTIER_PINS = [pel1Pin, pel2Pin, pel3Pin, pel4Pin, pel5Pin, pel6Pin, pel7Pin, pel8Pin]
+
+# Stepper motor pins for Heating Valve (enable=6, dir=13, pul=19)
+heatValveEnablePin = 6
+heatValveDirPin = 13
+heatValvePulPin = 19
+heatingValveEnablePin = heatValveEnablePin
+heatingValveDirPin = heatValveDirPin
+heatingValvePulPin = heatValvePulPin
+
+# Stepper motor pins for Cooling Valve (enable=25, dir=24, pul=23)
+coolValveEnablePin = 25
+coolValveDirPin = 24
+coolValvePulPin = 23
+coolingValveEnablePin = coolValveEnablePin
+coolingValveDirPin = coolValveDirPin
+coolingValvePulPin = coolValvePulPin
+
+# Stepper valve parameters
+VALVE_STEP_AMOUNT = 182
+VALVE_STEPS = 182
+VALVE_STEP_DELAY = 0.001
+
+# Legacy valve pin aliases (water solenoid valves replaced with steppers; main valve removed)
+mainValvePin = None
+sourceValvePin = None
+coolingValvePin = None
+heatingValvePin = None
+
+# Fans removed from GPIO except mixing (mixerPin = 5)
+fan1Pin = None
+fan2Pin = None
+aeratorFanPin = None
+aeratorCoolerFanPin = None
+
 # LED Lighting PWM configuration (MOSFET driver)
 ledPWMPin = 18
 PWM_PIN = ledPWMPin
@@ -38,8 +67,6 @@ MAX_LUX = 3000
 doSolenoidValve1 = 10         # NEED TO CONFIG FOR 3 PINS
 doSolenoidValve2 = 9
 doSolenoidValve3 = 11
-aeratorFanPin = 14            # Cooler fan for aerator solenoid valves
-aeratorCoolerFanPin = aeratorFanPin
 
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
 bleedValveDirPin = 17
@@ -229,14 +256,14 @@ def setDummyDrainValveState(isValveOpen: bool):
 def setDummyMainValve(isOpen: bool):
     global mainValveOpen
     mainValveOpen = isOpen
-    print(f"[DUMMY] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    print(f"[DUMMY] main water valve (removed from hardware) -> {'OPEN' if isOpen else 'CLOSED'}")
 
 # Default main valve pointer (PC mode)
 mainValve = setDummyMainValve
 mainValveState = setDummyMainValve
 
 def _update_main_valve_state():
-    # Main valve is kept always ON for constant water circulation
+    # Mixing tank to main tank valve removed entirely from hardware; track software state
     if not mainValveOpen:
         mainValve(True)
 
@@ -317,9 +344,7 @@ def _setRpiHeaterRelay(active: bool):
 def setRpiMainValve(isOpen: bool):
     global mainValveOpen
     mainValveOpen = isOpen
-    print(f"[RPI] main water valve -> {'OPEN' if isOpen else 'CLOSED'}")
-    if isRpiPresent and GPIO is not None:
-        GPIO.output(mainValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
+    print(f"[RPI] main water valve (removed from hardware) -> {'OPEN' if isOpen else 'CLOSED'}")
 
 setMainValve = setRpiMainValve
 
@@ -327,8 +352,6 @@ def setRpiSourceValveState(isValveOpen: bool):
     global sourceValveOpen
     sourceValveOpen = isValveOpen
     print(f"[RPI] source valve -> {sourceValveOpen}")
-    if isRpiPresent and GPIO is not None:
-        GPIO.output(sourceValvePin, GPIO.LOW if sourceValveOpen else GPIO.HIGH)
 
 setSourceValve = setRpiSourceValveState
 
@@ -336,26 +359,57 @@ def setRpiDrainValveState(isValveOpen: bool):
     global drainValveOpen
     drainValveOpen = isValveOpen
     print(f"[RPI] drain valve -> {drainValveOpen}")
-    #if isRpiPresent and GPIO is not None:
-    #    GPIO.output(drainValvePin, GPIO.LOW if drainValveOpen else GPIO.HIGH)
 
 setDrainValve = setRpiDrainValveState
 
+_valve_motor_lock = threading.Lock()
+
+def _step_valve_motor(enable_pin: int, dir_pin: int, pul_pin: int, direction, steps: int = VALVE_STEP_AMOUNT):
+    """
+    Steps a valve stepper motor driver:
+    - enable_pin: active LOW (MOTOR_ENABLE)
+    - dir_pin: CW (close) or CCW (open)
+    - pul_pin: step pulse pin
+    """
+    if not (isRpiPresent and GPIO is not None):
+        return
+    with _valve_motor_lock:
+        try:
+            GPIO.output(enable_pin, MOTOR_ENABLE)
+            GPIO.output(dir_pin, direction)
+            time.sleep(0.0001)
+            for _ in range(steps):
+                GPIO.output(pul_pin, GPIO.HIGH)
+                time.sleep(VALVE_STEP_DELAY)
+                GPIO.output(pul_pin, GPIO.LOW)
+                time.sleep(VALVE_STEP_DELAY)
+        except Exception as e:
+            logging.error(f"[RPI] GPIO failure during valve motor movement on pin {pul_pin}: {e}")
+            print(f"[RPI] GPIO failure during valve motor movement on pin {pul_pin}: {e}")
+
 def setRpiCoolingValve(isOpen: bool):
     global coolingValveOpen
-    coolingValveOpen = isOpen
-    print(f"[RPI] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isOpen == coolingValveOpen:
+        return
+    direction = CCW if isOpen else CW
+    action_str = "OPENING (CCW)" if isOpen else "CLOSING (CW)"
+    print(f"[RPI] cooling valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps (state: {'OPEN' if isOpen else 'CLOSED'})")
     if isRpiPresent and GPIO is not None:
-        GPIO.output(coolingValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
+        _step_valve_motor(coolValveEnablePin, coolValveDirPin, coolValvePulPin, direction, VALVE_STEP_AMOUNT)
+    coolingValveOpen = isOpen
 
 setCoolingValve = setRpiCoolingValve
 
 def setRpiHeatingValve(isOpen: bool):
     global heatingValveOpen
-    heatingValveOpen = isOpen
-    print(f"[RPI] heating valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    if isOpen == heatingValveOpen:
+        return
+    direction = CCW if isOpen else CW
+    action_str = "OPENING (CCW)" if isOpen else "CLOSING (CW)"
+    print(f"[RPI] heating valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps (state: {'OPEN' if isOpen else 'CLOSED'})")
     if isRpiPresent and GPIO is not None:
-        GPIO.output(heatingValvePin, GPIO.LOW if isOpen else GPIO.HIGH)
+        _step_valve_motor(heatValveEnablePin, heatValveDirPin, heatValvePulPin, direction, VALVE_STEP_AMOUNT)
+    heatingValveOpen = isOpen
 
 setHeatingValve = setRpiHeatingValve
 
@@ -363,7 +417,7 @@ setHeatingValve = setRpiHeatingValve
 def setDummyCoolingSystem(active: bool):
     global coolingSystemActive
     coolingSystemActive = active
-    print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
+    print(f"[DUMMY] cooling system (8 peltiers) -> {'ON' if active else 'OFF'}")
     _update_mixer_state()
     _update_main_valve_state()
 
@@ -371,15 +425,11 @@ def setRpiCoolingSystem(active: bool):
     global coolingSystemActive
     coolingSystemActive = active
     if isRpiPresent and GPIO is not None:
-        print(f"[RPI] cooling system -> {'ON' if active else 'OFF'}")
-        GPIO.output(pel1Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel2Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel3Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(pel4Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan1Pin, GPIO.LOW if active else GPIO.HIGH)
-        GPIO.output(fan2Pin, GPIO.LOW if active else GPIO.HIGH)
+        print(f"[RPI] cooling system (8 peltiers) -> {'ON' if active else 'OFF'}")
+        for pin in PELTIER_PINS:
+            GPIO.output(pin, GPIO.LOW if active else GPIO.HIGH)
     else:
-        print(f"[DUMMY] cooling system -> {'ON' if active else 'OFF'}")
+        print(f"[DUMMY] cooling system (8 peltiers) -> {'ON' if active else 'OFF'}")
     _update_mixer_state()
     _update_main_valve_state()
 
@@ -387,8 +437,12 @@ setCoolingSystem = setDummyCoolingSystem
 
 def setDummyCoolingValve(isOpen: bool):
     global coolingValveOpen
+    if isOpen == coolingValveOpen:
+        return
     coolingValveOpen = isOpen
-    print(f"[DUMMY] cooling valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    direction_str = "CCW" if isOpen else "CW"
+    action_str = "OPEN" if isOpen else "CLOSED"
+    print(f"[DUMMY] cooling valve stepper -> {action_str} ({direction_str}, {VALVE_STEP_AMOUNT} steps)")
 
 def setDummyHeatingSystem(active: bool):
     global heatingSystemActive, _heating_thread
@@ -411,33 +465,34 @@ def setDummyHeatingSystem(active: bool):
 
 def setDummyHeatingValve(isOpen: bool):
     global heatingValveOpen
+    if isOpen == heatingValveOpen:
+        return
     heatingValveOpen = isOpen
-    print(f"[DUMMY] heating valve -> {'OPEN' if isOpen else 'CLOSED'}")
+    direction_str = "CCW" if isOpen else "CW"
+    action_str = "OPEN" if isOpen else "CLOSED"
+    print(f"[DUMMY] heating valve stepper -> {action_str} ({direction_str}, {VALVE_STEP_AMOUNT} steps)")
 
-# Dissolved oxygen & aerator cooler fan
+# Dissolved oxygen & aerator cooler fan (software tracking only; fan removed from GPIO)
 def setDummyAeratorFan(active: bool):
     global aeratorFanActive, aeratorCoolerFanActive
     aeratorFanActive = active
     aeratorCoolerFanActive = active
-    print(f"[DUMMY] aerator cooler fan -> {'ON' if active else 'OFF'}")
+    print(f"[DUMMY] aerator cooler fan (software/unmapped) -> {'ON' if active else 'OFF'}")
 
 def setRpiAeratorFan(active: bool):
     global aeratorFanActive, aeratorCoolerFanActive
     aeratorFanActive = active
     aeratorCoolerFanActive = active
-    if isRpiPresent and GPIO is not None:
-        print(f"[RPI] aerator cooler fan -> {'ON' if active else 'OFF'}")
-        GPIO.output(aeratorFanPin, GPIO.LOW if active else GPIO.HIGH)
-    else:
-        print(f"[DUMMY] aerator cooler fan -> {'ON' if active else 'OFF'}")
+    print(f"[RPI] aerator cooler fan (software/unmapped) -> {'ON' if active else 'OFF'}")
 
 setAeratorFan = setRpiAeratorFan
 setAeratorCoolerFan = setRpiAeratorFan
 
 def _update_aerator_fan_state():
     """
-    Ensure the aerator cooler fan is enabled whenever at least one
+    Ensure the aerator cooler fan state is tracked when at least one
     aerator solenoid valve is turned on (_dosvcounter > 0), and disabled otherwise.
+    Note: Hardware fan has been removed from GPIO.
     """
     fan_needed = _dosvcounter > 0
     setAeratorFan(fan_needed)
@@ -711,25 +766,33 @@ doBleedValve = setDummyDoBleedValve
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.HIGH)
-    #GPIO.setup(drainValvePin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(mainValvePin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(pel1Pin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(pel2Pin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(pel3Pin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(pel4Pin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(fan1Pin, GPIO.OUT, initial=GPIO.HIGH)
-    GPIO.setup(fan2Pin, GPIO.OUT, initial=GPIO.HIGH)
-    #GPIO.setup(fan3Pin, GPIO.OUT)
-    #GPIO.setup(fan4Pin, GPIO.OUT)
-    GPIO.setup(coolingValvePin, GPIO.OUT, initial=GPIO.HIGH)
+
+    # 8 Peltier cooling modules (Active-LOW: LOW=ON, HIGH=OFF)
+    for pin in PELTIER_PINS:
+        GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
+
+    # Heating system (heater relay)
     GPIO.setup(heatingSystemPin, GPIO.OUT, initial=GPIO.LOW)
-    GPIO.setup(heatingValvePin, GPIO.OUT, initial=GPIO.HIGH)
+
+    # Mixer motor (Active-LOW: LOW=ON, HIGH=OFF)
     GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.HIGH)
+
+    # Dissolved oxygen aerator solenoid valves
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 1 else GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 2 else GPIO.HIGH)
     GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 3 else GPIO.HIGH)
-    GPIO.setup(aeratorFanPin, GPIO.OUT, initial=GPIO.LOW if _dosvcounter > 0 else GPIO.HIGH)
+
+    # Stepper motor pins for Heating Valve (enable=6, dir=13, pul=19)
+    GPIO.setup(heatValveEnablePin, GPIO.OUT)
+    GPIO.setup(heatValveDirPin, GPIO.OUT)
+    GPIO.setup(heatValvePulPin, GPIO.OUT)
+    GPIO.output(heatValveEnablePin, MOTOR_ENABLE)
+
+    # Stepper motor pins for Cooling Valve (enable=25, dir=24, pul=23)
+    GPIO.setup(coolValveEnablePin, GPIO.OUT)
+    GPIO.setup(coolValveDirPin, GPIO.OUT)
+    GPIO.setup(coolValvePulPin, GPIO.OUT)
+    GPIO.output(coolValveEnablePin, MOTOR_ENABLE)
     # Initialize LED PWM via pigpio DMA PWM
     if isPigpioPresent and pigpio is not None:
         try:
@@ -1274,32 +1337,24 @@ def cleanupGpio():
 
     if isRpiPresent and GPIO is not None:
         try:
-            print("[RPI] Closing main water valve...")
-            GPIO.output(mainValvePin, GPIO.HIGH)
-            GPIO.output(sourceValvePin, GPIO.HIGH)
-            GPIO.output(coolingValvePin, GPIO.HIGH)
-            GPIO.output(heatingValvePin, GPIO.HIGH)
+            print("[RPI] Disabling heating and cooling valve stepper drivers...")
+            GPIO.output(heatValveEnablePin, MOTOR_DISABLE)
+            GPIO.output(coolValveEnablePin, MOTOR_DISABLE)
         except Exception as e:
-            logging.warning(f"[RPI] Exception while resetting main valve: {e}")
+            logging.warning(f"[RPI] Exception while disabling valve stepper drivers: {e}")
         try:
-            print("[RPI] Turning off peltier cooling elements and fans...")
-            GPIO.output(pel1Pin, GPIO.HIGH)
-            GPIO.output(pel2Pin, GPIO.HIGH)
-            GPIO.output(pel3Pin, GPIO.HIGH)
-            GPIO.output(pel4Pin, GPIO.HIGH)
-            GPIO.output(fan1Pin, GPIO.HIGH)
-            GPIO.output(fan2Pin, GPIO.HIGH)
+            print("[RPI] Turning off peltier cooling elements (8 modules)...")
+            for pin in PELTIER_PINS:
+                GPIO.output(pin, GPIO.HIGH)
         except Exception as e:
-            logging.warning(f"[RPI] Exception while resetting cooling system: {e}")
+            logging.warning(f"[RPI] Exception while resetting cooling peltiers: {e}")
         try:
-            print("[RPI] Turning off aerator cooler fan...")
-            GPIO.output(aeratorFanPin, GPIO.HIGH)
             print("[RPI] Closing aerator solenoid valves...")
             GPIO.output(doSolenoidValve1, GPIO.HIGH)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
             GPIO.output(doSolenoidValve3, GPIO.HIGH)
         except Exception as e:
-            logging.warning(f"[RPI] Exception while resetting aerator fan and valves: {e}")
+            logging.warning(f"[RPI] Exception while resetting aerator valves: {e}")
         try:
             print("[RPI] Turning off heater relay and mixer...")
             GPIO.output(heatingSystemPin, GPIO.LOW)

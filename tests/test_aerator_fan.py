@@ -23,9 +23,9 @@ class TestAeratorCoolerFan(unittest.TestCase):
         self.app_context.pop()
 
     def test_pin_assignment(self):
-        """Test that aerator cooler fan is configured for GPIO 14."""
-        self.assertEqual(piUtils.aeratorFanPin, 14)
-        self.assertEqual(piUtils.aeratorCoolerFanPin, 14)
+        """Test that aerator cooler fan is removed from GPIO (None/unmapped; GPIO 14 is now a peltier)."""
+        self.assertIsNone(piUtils.aeratorFanPin)
+        self.assertIsNone(piUtils.aeratorCoolerFanPin)
 
     def test_dummy_fan_enables_when_at_least_one_solenoid_valve_open(self):
         """Test dummy fan state is ON when 1, 2, or 3 solenoid valves are open, and OFF when 0."""
@@ -99,7 +99,7 @@ class TestAeratorCoolerFan(unittest.TestCase):
         self.assertFalse(piUtils.aeratorFanActive)
 
     def test_rpi_aerator_fan_gpio_control(self):
-        """Test RPi GPIO output for aerator fan on GPIO 14 (Active-LOW: LOW=ON, HIGH=OFF)."""
+        """Test that aerator fan is tracked in software and does NOT drive GPIO pin 14 (now a peltier)."""
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
         mock_gpio.LOW = 0
@@ -107,25 +107,27 @@ class TestAeratorCoolerFan(unittest.TestCase):
         with patch.object(piUtils, "GPIO", mock_gpio), \
              patch.object(piUtils, "isRpiPresent", True), \
              patch.object(piUtils, "doSolenoidValve", piUtils.setRpiDoSolenoidValve):
-            # Start with 0 valves -> fan OFF (HIGH)
+            # Start with 0 valves -> fan OFF
             piUtils.setDoSolenoidValveCount(0)
-            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
             self.assertFalse(piUtils.aeratorFanActive)
 
-            # Open 1 valve -> GPIO 14 set LOW (ON)
+            # Open 1 valve -> fan ON (software state)
             piUtils.setDoSolenoidValveCount(1)
-            mock_gpio.output.assert_called_with(14, mock_gpio.LOW)
             self.assertTrue(piUtils.aeratorFanActive)
 
-            # Open 3 valves -> GPIO 14 remains LOW (ON)
+            # Open 3 valves -> fan remains ON
             piUtils.setDoSolenoidValveCount(3)
-            mock_gpio.output.assert_called_with(14, mock_gpio.LOW)
             self.assertTrue(piUtils.aeratorFanActive)
 
-            # Close all valves -> GPIO 14 set HIGH (OFF)
+            # Close all valves -> fan turns OFF
             piUtils.setDoSolenoidValveCount(0)
-            mock_gpio.output.assert_called_with(14, mock_gpio.HIGH)
             self.assertFalse(piUtils.aeratorFanActive)
+
+            # Fan output should NOT be directed to GPIO pin 14 (pin 14 is a peltier)
+            # Only solenoid pins (10, 9, 11) should be written to during solenoid valve operations
+            valve_pins = {piUtils.doSolenoidValve1, piUtils.doSolenoidValve2, piUtils.doSolenoidValve3}
+            written_pins = {call_arg[0][0] for call_arg in mock_gpio.output.call_args_list}
+            self.assertTrue(written_pins.issubset(valve_pins))
 
     def test_rpi_do_solenoid_valves_gpio_control(self):
         """Test RPi GPIO output for DO solenoid valves (Active-LOW: LOW=OPEN, HIGH=CLOSED)."""
@@ -186,7 +188,7 @@ class TestAeratorCoolerFan(unittest.TestCase):
             mock_gpio.output.assert_any_call(piUtils.doSolenoidValve3, mock_gpio.HIGH)
 
     def test_cleanup_disables_aerator_fan(self):
-        """Test cleanupGpio turns off aerator fan on GPIO 14 (Active-LOW: HIGH=OFF)."""
+        """Test cleanupGpio turns off aerator fan state without driving GPIO fan."""
         piUtils.setDoSolenoidValveCount(2)
         self.assertTrue(piUtils.aeratorFanActive)
 
@@ -199,7 +201,6 @@ class TestAeratorCoolerFan(unittest.TestCase):
              patch.object(piUtils, "doSolenoidValve", piUtils.setRpiDoSolenoidValve):
             piUtils.cleanupGpio()
             self.assertFalse(piUtils.aeratorFanActive)
-            mock_gpio.output.assert_any_call(14, mock_gpio.HIGH)
 
 
 if __name__ == "__main__":
