@@ -206,7 +206,7 @@
   }
 
   function conditionLabel(condition) {
-    return { optimal: "Optimal", warning: "Warning", critical: "Critical", neutral: "—" }[condition] || "—";
+    return { optimal: "Optimal", warning: "Warning", critical: "Critical", adjusting: "Adjusting", neutral: "—" }[condition] || "—";
   }
 
   function buildDayPoints(readings) {
@@ -365,7 +365,12 @@
       const config = metrics[metric];
       const current = len > 0 ? Number(points[len - 1][metric]) : null;
       const prev = len > 1 ? Number(points[len - 2][metric]) : null;
-      const condition = conditionFor(metric, current);
+      let condition = conditionFor(metric, current);
+      if (window.HatcheryRateOfChange && typeof window.HatcheryRateOfChange.isRateOfChangeAdjusting === "function") {
+        if ((metric === "temperature" || metric === "dissolved_oxygen") && window.HatcheryRateOfChange.isRateOfChangeAdjusting(metric, current)) {
+          condition = "adjusting";
+        }
+      }
 
       const valueEl = document.querySelector(`[data-kpi-value="${metric}"]`);
       if (valueEl) {
@@ -406,7 +411,12 @@
     const len = points.length;
     Object.keys(metrics).forEach((metric) => {
       const current = len > 0 ? Number(points[len - 1][metric]) : null;
-      const condition = conditionFor(metric, current);
+      let condition = conditionFor(metric, current);
+      if (window.HatcheryRateOfChange && typeof window.HatcheryRateOfChange.isRateOfChangeAdjusting === "function") {
+        if ((metric === "temperature" || metric === "dissolved_oxygen") && window.HatcheryRateOfChange.isRateOfChangeAdjusting(metric, current)) {
+          condition = "adjusting";
+        }
+      }
       const badge = document.querySelector(`[data-chart-status="${metric}"]`);
       if (badge) {
         badge.textContent = conditionLabel(condition);

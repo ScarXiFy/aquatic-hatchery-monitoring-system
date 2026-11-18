@@ -25,6 +25,38 @@
     },
   };
 
+  const STORAGE_KEY_SETPOINT_TRACKERS = "hatchery:setpoint-trackers";
+
+  function getStoredItem(key) {
+    try {
+      const sess = sessionStorage.getItem(key);
+      if (sess !== null) return sess;
+    } catch (e) {}
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setStoredItem(key, value) {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch (e) {}
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {}
+  }
+
+  function removeStoredItem(key) {
+    try {
+      sessionStorage.removeItem(key);
+    } catch (e) {}
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {}
+  }
+
   const setpointTrackers = {
     temperature: {
       targetSetpoint: 26.0,
@@ -47,6 +79,41 @@
       lastRate: 0,
     },
   };
+
+  function saveSetpointTrackers() {
+    try {
+      setStoredItem(STORAGE_KEY_SETPOINT_TRACKERS, JSON.stringify(setpointTrackers));
+    } catch (e) {}
+  }
+
+  function loadSetpointTrackers() {
+    try {
+      const raw = getStoredItem(STORAGE_KEY_SETPOINT_TRACKERS);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        const now = Date.now();
+        const MAX_TRANSITION_MS = 15 * 60 * 1000;
+        ["temperature", "dissolved_oxygen"].forEach((metric) => {
+          if (parsed[metric] && typeof parsed[metric] === "object") {
+            const saved = parsed[metric];
+            const tracker = setpointTrackers[metric];
+            tracker.targetSetpoint = saved.targetSetpoint !== undefined ? Number(saved.targetSetpoint) : tracker.targetSetpoint;
+            const isTimedOut = saved.startTime && (now - Number(saved.startTime) > MAX_TRANSITION_MS);
+            tracker.active = Boolean(saved.active) && !isTimedOut;
+            tracker.initialValue = saved.initialValue !== null && saved.initialValue !== undefined ? Number(saved.initialValue) : null;
+            tracker.startTime = saved.startTime ? Number(saved.startTime) : null;
+            tracker.readings = Array.isArray(saved.readings) ? saved.readings : [];
+            tracker.stalledCount = Number(saved.stalledCount) || 0;
+            tracker.wrongDirectionCount = Number(saved.wrongDirectionCount) || 0;
+            tracker.lastRate = Number(saved.lastRate) || 0;
+          }
+        });
+      }
+    } catch (e) {}
+  }
+
+  loadSetpointTrackers();
 
   /**
    * Record when temperature or DO setpoint is changed.
@@ -91,6 +158,7 @@
       tracker.initialValue = null;
       tracker.readings = [];
     }
+    saveSetpointTrackers();
   }
 
   /**
@@ -119,6 +187,7 @@
       tracker.initialValue = null;
       tracker.stalledCount = 0;
       tracker.wrongDirectionCount = 0;
+      saveSetpointTrackers();
       return false;
     }
 
@@ -129,6 +198,7 @@
       tracker.initialValue = val;
       tracker.startTime = now;
       tracker.readings = [{ value: val, timestamp: now }];
+      saveSetpointTrackers();
       return true;
     }
 
@@ -140,6 +210,7 @@
       if (tracker.readings.length > 10) {
         tracker.readings.shift();
       }
+      saveSetpointTrackers();
     }
 
     // 2. Initial grace / observation window:
@@ -151,6 +222,7 @@
     // Maximum transition duration (15 minutes): if not reached after 15m, trigger alarm
     if (now - tracker.startTime > 15 * 60 * 1000) {
       tracker.active = false;
+      saveSetpointTrackers();
       return false;
     }
 
@@ -175,6 +247,7 @@
         tracker.wrongDirectionCount++;
         if (tracker.wrongDirectionCount >= 3) {
           tracker.active = false;
+          saveSetpointTrackers();
           return false;
         }
       } else {
@@ -188,6 +261,7 @@
           tracker.stalledCount++;
           if (tracker.stalledCount >= 5) {
             tracker.active = false;
+            saveSetpointTrackers();
             return false;
           }
         } else {
@@ -201,6 +275,7 @@
         tracker.wrongDirectionCount++;
         if (tracker.wrongDirectionCount >= 3) {
           tracker.active = false;
+          saveSetpointTrackers();
           return false;
         }
       } else {
@@ -214,6 +289,7 @@
           tracker.stalledCount++;
           if (tracker.stalledCount >= 5) {
             tracker.active = false;
+            saveSetpointTrackers();
             return false;
           }
         } else {
@@ -483,26 +559,6 @@
   const STORAGE_KEY_METRIC_STATES = "hatchery:metric-states";
   const STORAGE_KEY_DISMISSED_KEYS = "hatchery:dismissed-keys";
   const STORAGE_KEY_DOCKED_TEXT = "hatchery:docked-text";
-
-  function getStoredItem(key) {
-    try {
-      return sessionStorage.getItem(key);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  function setStoredItem(key, value) {
-    try {
-      sessionStorage.setItem(key, value);
-    } catch (e) {}
-  }
-
-  function removeStoredItem(key) {
-    try {
-      sessionStorage.removeItem(key);
-    } catch (e) {}
-  }
 
   const previousMetricStates = {};
   const storedMetricStates = getStoredItem(STORAGE_KEY_METRIC_STATES);
@@ -1036,6 +1092,13 @@
       }
       const payload = await response.json();
       thresholds = payload.thresholds || [];
+      thresholds.forEach((item) => {
+        if (item.metric === "temperature" && item.min_value !== undefined) {
+          controlState.temperature_setpoint = Number(item.min_value);
+        } else if (item.metric === "dissolved_oxygen" && item.min_value !== undefined) {
+          controlState.dissolved_oxygen_setpoint = Number(item.min_value);
+        }
+      });
       renderThresholds();
       window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
     } catch (e) {
@@ -1083,6 +1146,9 @@
       }
       const payload = await response.json();
       if (payload.sliders) {
+        Object.entries(payload.sliders).forEach(([key, value]) => {
+          controlState[key] = Number(value);
+        });
         updateSliders(payload.sliders);
       }
       if (payload.valves) {

@@ -1044,6 +1044,12 @@ input:focus-visible {
   border: 1px solid rgba(220, 38, 38, 0.3);
 }
 
+.chart-status-badge[data-condition="adjusting"] {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
 .chart-status-badge[data-condition="neutral"] {
   background: rgba(148, 163, 184, 0.16);
   color: #475569;

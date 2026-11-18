@@ -160,6 +160,179 @@ console.log("ALL_BEHAVIORAL_TESTS_PASSED");
         self.assertEqual(proc.returncode, 0, f"Node tests failed: {proc.stderr}\n{proc.stdout}")
         self.assertIn("ALL_BEHAVIORAL_TESTS_PASSED", proc.stdout)
 
+    def test_page_switch_from_home_to_view_graphs_preserves_adjusting_state_and_suppresses_alert(self):
+        """
+        Verify that when temperature setpoint is changed on the home page and is adjusting,
+        switching to the view graph page (/graph) preserves the rate of change observation
+        in storage and does NOT pop up the alert modal or play the alarm sound.
+        """
+        node_script = """
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const code = fs.readFileSync(process.argv[1], "utf8");
+
+// Shared storage simulating browser across page transitions
+const sharedSessionStorage = new Map();
+const sharedLocalStorage = new Map();
+
+function createStorage(map) {
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k)
+  };
+}
+
+let simulatedNow = 1000000;
+class MockDate {
+  constructor() { this.t = simulatedNow; }
+  static now() { return simulatedNow; }
+  getTime() { return this.t; }
+}
+
+// -------------------------------------------------------------
+// 1. User on Home Page (/): changes temp setpoint 26 -> 28 °C
+// -------------------------------------------------------------
+const homeDoc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return { hidden: true };
+    return null;
+  },
+  querySelector: (sel) => {
+    if (sel === ".alert-modal-card") return { setAttribute: () => {} };
+    return null;
+  },
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+const homeWindow = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: createStorage(sharedSessionStorage),
+  localStorage: createStorage(sharedLocalStorage)
+};
+
+const homeContext = vm.createContext({
+  window: homeWindow,
+  document: homeDoc,
+  sessionStorage: homeWindow.sessionStorage,
+  localStorage: homeWindow.localStorage,
+  CustomEvent: function() {},
+  console: console,
+  Date: MockDate,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout
+});
+
+vm.runInContext(code, homeContext);
+
+// User changes temperature setpoint to 28.0 on Home page
+const homeRate = homeContext.window.HatcheryRateOfChange;
+homeRate.recordSetpointChange("temperature", 28.0);
+assert.strictEqual(homeRate.setpointTrackers.temperature.active, true);
+
+// Reading arrives on Home page (26.0°C)
+assert.strictEqual(homeRate.isRateOfChangeAdjusting("temperature", 26.0), true);
+
+simulatedNow += 3000;
+assert.strictEqual(homeRate.isRateOfChangeAdjusting("temperature", 26.15), true);
+
+// -------------------------------------------------------------
+// 2. User navigates to View Graph Page (/graph)
+// -------------------------------------------------------------
+const graphOverlay = { hidden: true };
+let alarmPlayedOnGraph = false;
+
+const graphDoc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return graphOverlay;
+    if (id === "alert-docked-card") return { hidden: true };
+    return null;
+  },
+  querySelector: (sel) => {
+    if (sel === ".alert-modal-card") return { setAttribute: () => {} };
+    return null;
+  },
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+const graphWindow = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 }
+  },
+  HatcherySound: {
+    updateAlarmState: (alerts) => {
+      if (alerts && alerts.has && alerts.has("temperature")) {
+        alarmPlayedOnGraph = true;
+      }
+    },
+    stopAllAudio: () => {}
+  },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: createStorage(sharedSessionStorage),
+  localStorage: createStorage(sharedLocalStorage)
+};
+
+const graphContext = vm.createContext({
+  window: graphWindow,
+  document: graphDoc,
+  sessionStorage: graphWindow.sessionStorage,
+  localStorage: graphWindow.localStorage,
+  CustomEvent: function() {},
+  console: console,
+  Date: MockDate,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout
+});
+
+// Load dashboard.js in fresh context simulating navigation to /graph
+vm.runInContext(code, graphContext);
+
+const graphRate = graphContext.window.HatcheryRateOfChange;
+// Verify that the active adjusting state was restored from storage
+assert.strictEqual(graphRate.setpointTrackers.temperature.active, true, "Tracker active state must be restored on /graph");
+assert.strictEqual(graphRate.setpointTrackers.temperature.targetSetpoint, 28.0, "Target setpoint 28.0 must be restored on /graph");
+
+// Next reading arrives while on View Graph page (26.35°C)
+simulatedNow += 3000;
+const isAdjustingOnGraph = graphRate.isRateOfChangeAdjusting("temperature", 26.35);
+assert.strictEqual(isAdjustingOnGraph, true, "Must recognize adjusting state on /graph");
+
+// Verify that alert modal overlay did NOT pop up and alarm sound did NOT trigger
+assert.strictEqual(graphOverlay.hidden, true, "Alert modal overlay must remain hidden on /graph");
+assert.strictEqual(alarmPlayedOnGraph, false, "Alarm sound must not play on /graph while adjusting");
+
+console.log("PAGE_SWITCH_VERIFIED_SUCCESS");
+        """
+        proc = subprocess.run(
+            ["node", "-e", node_script, str(self.dashboard_js_path)],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Page switch test failed: {proc.stderr}\n{proc.stdout}")
+        self.assertIn("PAGE_SWITCH_VERIFIED_SUCCESS", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
