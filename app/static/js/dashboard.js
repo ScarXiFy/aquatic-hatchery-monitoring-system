@@ -25,6 +25,206 @@
     },
   };
 
+  const setpointTrackers = {
+    temperature: {
+      targetSetpoint: 26.0,
+      active: false,
+      initialValue: null,
+      startTime: null,
+      readings: [],
+      stalledCount: 0,
+      wrongDirectionCount: 0,
+      lastRate: 0,
+    },
+    dissolved_oxygen: {
+      targetSetpoint: 7.2,
+      active: false,
+      initialValue: null,
+      startTime: null,
+      readings: [],
+      stalledCount: 0,
+      wrongDirectionCount: 0,
+      lastRate: 0,
+    },
+  };
+
+  /**
+   * Record when temperature or DO setpoint is changed.
+   * If current reading differs from new setpoint beyond normal tolerance,
+   * activates rate-of-change observation and suppresses immediate alarms.
+   */
+  function recordSetpointChange(metric, newSetpoint) {
+    const tracker = setpointTrackers[metric];
+    if (!tracker) return;
+
+    const numTarget = Number(newSetpoint);
+    if (Number.isNaN(numTarget)) return;
+
+    const currentVal = latestReading && latestReading[metric] !== undefined && !Number.isNaN(Number(latestReading[metric]))
+      ? Number(latestReading[metric])
+      : null;
+
+    const warning_limit = metric === "temperature" ? 1.0 : 0.5;
+
+    tracker.targetSetpoint = numTarget;
+    tracker.startTime = Date.now();
+    tracker.stalledCount = 0;
+    tracker.wrongDirectionCount = 0;
+    tracker.lastRate = 0;
+
+    if (currentVal === null || Math.abs(currentVal - numTarget) >= warning_limit) {
+      tracker.active = true;
+      tracker.initialValue = currentVal;
+      tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: Date.now() }] : [];
+
+      // Suppress/clear any active alarm for this metric right away when setpoint is changed
+      activeAlertsMap.delete(metric);
+      dismissedAlertKeys.delete(`${metric}_WARNING`);
+      dismissedAlertKeys.delete(`${metric}_CRITICAL`);
+      dismissedAlertKeys.delete(`${metric}_Warning`);
+      dismissedAlertKeys.delete(`${metric}_Critical`);
+      if (window.HatcherySound) {
+        window.HatcherySound.updateAlarmState(activeAlertsMap);
+      }
+    } else {
+      tracker.active = false;
+      tracker.initialValue = null;
+      tracker.readings = [];
+    }
+  }
+
+  /**
+   * Observe rate of change for temperature and DO following a setpoint change.
+   * Returns true if alarm should be suppressed (system is in initial observation window or progressing toward setpoint).
+   * Returns false if normal alarm behavior applies (target reached, stalled, or moving in wrong direction).
+   */
+  function isRateOfChangeAdjusting(metric, currentValue) {
+    const tracker = setpointTrackers[metric];
+    if (!tracker || !tracker.active) {
+      return false;
+    }
+
+    const val = Number(currentValue);
+    if (Number.isNaN(val)) {
+      return false;
+    }
+
+    const warning_limit = metric === "temperature" ? 1.0 : 0.5;
+    const diff = Math.abs(val - tracker.targetSetpoint);
+
+    // 1. If within warning limit of setpoint, target optimal range has been reached
+    if (diff < warning_limit) {
+      tracker.active = false;
+      tracker.readings = [];
+      tracker.initialValue = null;
+      tracker.stalledCount = 0;
+      tracker.wrongDirectionCount = 0;
+      return false;
+    }
+
+    const now = Date.now();
+
+    // If initialValue was not known at slider change time, set it on first reading
+    if (tracker.initialValue === null) {
+      tracker.initialValue = val;
+      tracker.startTime = now;
+      tracker.readings = [{ value: val, timestamp: now }];
+      return true;
+    }
+
+    // Record reading in rolling history (avoid rapid duplicates within same cycle)
+    const lastReading = tracker.readings.length ? tracker.readings[tracker.readings.length - 1] : null;
+    const shouldAddReading = !lastReading || (now - lastReading.timestamp >= 1500);
+    if (shouldAddReading) {
+      tracker.readings.push({ value: val, timestamp: now });
+      if (tracker.readings.length > 10) {
+        tracker.readings.shift();
+      }
+    }
+
+    // 2. Initial grace / observation window:
+    // Do not trigger alarm right away; give actuators and water bulk time to respond (first 4 readings or 15s)
+    if (tracker.readings.length <= 4 || (now - tracker.startTime < 15000)) {
+      return true;
+    }
+
+    // Maximum transition duration (15 minutes): if not reached after 15m, trigger alarm
+    if (now - tracker.startTime > 15 * 60 * 1000) {
+      tracker.active = false;
+      return false;
+    }
+
+    // 3. Compute rate of change over recent window (last 4-5 readings)
+    const windowSlice = tracker.readings.slice(-5);
+    const firstInWindow = windowSlice[0];
+    const latestInWindow = windowSlice[windowSlice.length - 1];
+    const dtSeconds = Math.max(1, (latestInWindow.timestamp - firstInWindow.timestamp) / 1000);
+    const dVal = latestInWindow.value - firstInWindow.value;
+    const rate = dVal / dtSeconds;
+    tracker.lastRate = rate;
+
+    const targetIsHigher = tracker.targetSetpoint > tracker.initialValue;
+    const noiseTolerance = metric === "temperature" ? 0.05 : 0.03;
+    const wrongDirectionThreshold = metric === "temperature" ? 0.08 : 0.04;
+
+    // 4. Direction and progress evaluation
+    if (targetIsHigher) {
+      // Need heating or increasing DO: expected rate is positive or value moving towards target
+      const isMovingWrongWay = dVal < -wrongDirectionThreshold || latestInWindow.value < tracker.initialValue - wrongDirectionThreshold;
+      if (isMovingWrongWay) {
+        tracker.wrongDirectionCount++;
+        if (tracker.wrongDirectionCount >= 3) {
+          tracker.active = false;
+          return false;
+        }
+      } else {
+        tracker.wrongDirectionCount = Math.max(0, tracker.wrongDirectionCount - 1);
+      }
+
+      // Check for stalled condition after at least 8 readings (~24s)
+      if (tracker.readings.length >= 8) {
+        const progressFromStart = latestInWindow.value - tracker.initialValue;
+        if (progressFromStart < noiseTolerance && Math.abs(dVal) < noiseTolerance) {
+          tracker.stalledCount++;
+          if (tracker.stalledCount >= 5) {
+            tracker.active = false;
+            return false;
+          }
+        } else {
+          tracker.stalledCount = Math.max(0, tracker.stalledCount - 1);
+        }
+      }
+    } else {
+      // Need cooling or decreasing DO: expected rate is negative or value moving towards target
+      const isMovingWrongWay = dVal > wrongDirectionThreshold || latestInWindow.value > tracker.initialValue + wrongDirectionThreshold;
+      if (isMovingWrongWay) {
+        tracker.wrongDirectionCount++;
+        if (tracker.wrongDirectionCount >= 3) {
+          tracker.active = false;
+          return false;
+        }
+      } else {
+        tracker.wrongDirectionCount = Math.max(0, tracker.wrongDirectionCount - 1);
+      }
+
+      // Check for stalled condition
+      if (tracker.readings.length >= 8) {
+        const progressFromStart = tracker.initialValue - latestInWindow.value;
+        if (progressFromStart < noiseTolerance && Math.abs(dVal) < noiseTolerance) {
+          tracker.stalledCount++;
+          if (tracker.stalledCount >= 5) {
+            tracker.active = false;
+            return false;
+          }
+        } else {
+          tracker.stalledCount = Math.max(0, tracker.stalledCount - 1);
+        }
+      }
+    }
+
+    return true;
+  }
+
   function truncateToOneDecimal(value) {
     if (value === null || value === undefined || Number.isNaN(Number(value))) {
       return "--";
@@ -146,7 +346,7 @@
     if (!element) {
       return;
     }
-    element.classList.remove("status-neutral", "status-warning", "status-critical");
+    element.classList.remove("status-neutral", "status-warning", "status-critical", "status-adjusting");
     if (state === "warning") {
       element.textContent = "Warning";
       element.classList.add("status-warning");
@@ -155,6 +355,11 @@
     if (state === "critical") {
       element.textContent = "Critical";
       element.classList.add("status-critical");
+      return;
+    }
+    if (state === "adjusting") {
+      element.textContent = "Adjusting";
+      element.classList.add("status-adjusting");
       return;
     }
     if (state === "optimal") {
@@ -213,11 +418,14 @@
     }
 
     const value = Number(reading[metric]);
-    const state = conditionFor(metric, value);
+    let state = conditionFor(metric, value);
+    if ((metric === "temperature" || metric === "dissolved_oxygen") && isRateOfChangeAdjusting(metric, value)) {
+      state = "adjusting";
+    }
     valueElement.textContent = formatValue(metric, value, false);
     setBadgeState(statusElement, state);
     gaugeElement.style.setProperty("--gauge-progress", `${gaugeDegrees(metric, value)}deg`);
-    const gaugeColor = state === "critical" ? "#ef4444" : state === "warning" ? "#fbbf24" : "#10b981";
+    const gaugeColor = state === "critical" ? "#ef4444" : state === "warning" ? "#fbbf24" : state === "adjusting" ? "#3b82f6" : "#10b981";
     gaugeElement.style.setProperty("--gauge-color", gaugeColor);
   }
 
@@ -227,11 +435,19 @@
       return;
     }
 
-    const states = Object.keys(metrics).map((metric) => conditionFor(metric, Number(reading[metric])));
+    const states = Object.keys(metrics).map((metric) => {
+      const val = Number(reading[metric]);
+      if ((metric === "temperature" || metric === "dissolved_oxygen") && isRateOfChangeAdjusting(metric, val)) {
+        return "adjusting";
+      }
+      return conditionFor(metric, val);
+    });
     const overallState = states.includes("critical")
       ? "critical"
       : states.includes("warning")
       ? "warning"
+      : states.includes("adjusting")
+      ? "adjusting"
       : states.every((s) => s === "neutral")
       ? "neutral"
       : "optimal";
@@ -244,6 +460,9 @@
     } else if (overallState === "warning") {
       indicator.classList.add("status-warning");
       indicator.lastChild.textContent = " Warning";
+    } else if (overallState === "adjusting") {
+      indicator.classList.add("status-neutral");
+      indicator.lastChild.textContent = " Adjusting";
     } else if (overallState === "neutral") {
       indicator.classList.add("status-neutral");
       indicator.lastChild.textContent = " Waiting";
@@ -557,8 +776,20 @@
     Object.keys(metricDisplayNames).forEach((metric) => {
       const val = Number(reading[metric]);
       const state = conditionFor(metric, val);
+      const isAdjusting = (metric === "temperature" || metric === "dissolved_oxygen") && isRateOfChangeAdjusting(metric, val);
       const prevState = previousMetricStates[metric];
       const paramName = metricDisplayNames[metric];
+
+      if (isAdjusting) {
+        // Temperature or DO setpoint was changed: alarm is not triggered right away, observing rate of change
+        activeAlertsMap.delete(metric);
+        dismissedAlertKeys.delete(`${metric}_WARNING`);
+        dismissedAlertKeys.delete(`${metric}_CRITICAL`);
+        dismissedAlertKeys.delete(`${metric}_Warning`);
+        dismissedAlertKeys.delete(`${metric}_Critical`);
+        previousMetricStates[metric] = "adjusting";
+        return;
+      }
 
       if (state === "warning" || state === "critical") {
         const statusText = state === "critical" ? "CRITICAL" : "WARNING";
@@ -1046,18 +1277,30 @@
     controlState[key] = value;
 
     if (key === "temperature_setpoint") {
+      recordSetpointChange("temperature", value);
       const item = thresholds.find((t) => t.metric === "temperature");
       if (item) {
         item.min_value = value;
         item.max_value = value;
         window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
       }
+      if (latestReading) {
+        updateGauge("temperature", latestReading);
+        updateNavStatus(latestReading);
+        checkAlertTriggers(latestReading);
+      }
     } else if (key === "dissolved_oxygen_setpoint") {
+      recordSetpointChange("dissolved_oxygen", value);
       const item = thresholds.find((t) => t.metric === "dissolved_oxygen");
       if (item) {
         item.min_value = value;
         item.max_value = value;
         window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+      }
+      if (latestReading) {
+        updateGauge("dissolved_oxygen", latestReading);
+        updateNavStatus(latestReading);
+        checkAlertTriggers(latestReading);
       }
     }
   }
@@ -1370,4 +1613,11 @@
     ]).then(scheduleMidnightTrendRefresh);
     bindSocket();
   });
+  if (typeof window !== "undefined") {
+    window.HatcheryRateOfChange = {
+      setpointTrackers,
+      recordSetpointChange,
+      isRateOfChangeAdjusting,
+    };
+  }
 })();
