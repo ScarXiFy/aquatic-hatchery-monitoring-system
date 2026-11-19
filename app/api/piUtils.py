@@ -258,7 +258,6 @@ def setDummyDrainValveState(isValveOpen: bool):
 def setDummyMainValve(isOpen: bool):
     global mainValveOpen
     mainValveOpen = isOpen
-    print(f"[DUMMY] main water valve (removed from hardware) -> {'OPEN' if isOpen else 'CLOSED'}")
 
 # Default main valve pointer (PC mode)
 mainValve = setDummyMainValve
@@ -346,7 +345,6 @@ def _setRpiHeaterRelay(active: bool):
 def setRpiMainValve(isOpen: bool):
     global mainValveOpen
     mainValveOpen = isOpen
-    print(f"[RPI] main water valve (removed from hardware) -> {'OPEN' if isOpen else 'CLOSED'}")
 
 setMainValve = setRpiMainValve
 
@@ -501,13 +499,11 @@ def setDummyAeratorFan(active: bool):
     global aeratorFanActive, aeratorCoolerFanActive
     aeratorFanActive = active
     aeratorCoolerFanActive = active
-    print(f"[DUMMY] aerator cooler fan (software/unmapped) -> {'ON' if active else 'OFF'}")
 
 def setRpiAeratorFan(active: bool):
     global aeratorFanActive, aeratorCoolerFanActive
     aeratorFanActive = active
     aeratorCoolerFanActive = active
-    print(f"[RPI] aerator cooler fan (software/unmapped) -> {'ON' if active else 'OFF'}")
 
 setAeratorFan = setRpiAeratorFan
 setAeratorCoolerFan = setRpiAeratorFan
@@ -1109,12 +1105,6 @@ def applyTemperatureControl(
         else:
             print(f"[CONTROL] Tank temp HIGH ({temperature}C >= {high}C) [reading {_temp_consecutive_high}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering cooling")
             mainValve(True)
-            if last_temp_system == "heating":
-                heatingValve(False)
-                coolingValve(True)
-            else:
-                coolingValve(False)
-                heatingValve(True)
 
     elif round(temperature, 4) <= low:
         _temp_consecutive_low += 1
@@ -1175,12 +1165,6 @@ def applyTemperatureControl(
         else:
             print(f"[CONTROL] Tank temp LOW ({temperature}C <= {low}C) [reading {_temp_consecutive_low}/{consecutive_required}] - waiting for {consecutive_required} consecutive readings before triggering heating")
             mainValve(True)
-            if last_temp_system == "heating":
-                heatingValve(False)
-                coolingValve(True)
-            else:
-                coolingValve(False)
-                heatingValve(True)
 
     else:
         _temp_consecutive_high = 0

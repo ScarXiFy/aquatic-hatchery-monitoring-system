@@ -217,7 +217,9 @@ def start_sensor_simulator(socketio, app):
             for key, val in targets.items():
                 CONTROL_STATE["sliders"][key] = val
 
-            secondary_temp = reading.get("mixing_temperature", read_secondary_temp_sensor())
+            secondary_temp = reading.get("mixing_temperature")
+            if secondary_temp is None:
+                secondary_temp = read_secondary_temp_sensor()
             # Controls operate on calibrated values:
             applyTemperatureControl(
                 reading["temperature"],

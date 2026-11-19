@@ -46,12 +46,15 @@ def register_socketio_events(socketio):
         socketio.emit("server_ready", {"boot_id": SERVER_BOOT_TIME}, to=sid)
         try:
             from app.models import get_control_settings, get_thresholds
-            from app.api.routes import CONTROL_STATE
+            from app.api.routes import CONTROL_STATE, SETPOINT_UPDATED_AT, IS_SYSTEM_START
             sliders = get_control_settings()
             thresholds_data = get_thresholds()
             socketio.emit("controls_updated", {
                 "sliders": sliders,
-                "valves": CONTROL_STATE.get("valves", {})
+                "valves": CONTROL_STATE.get("valves", {}),
+                "setpoint_times": SETPOINT_UPDATED_AT,
+                "is_system_start": IS_SYSTEM_START,
+                "server_time": int(time.time() * 1000),
             }, to=sid)
             socketio.emit("thresholds_updated", {
                 "thresholds": thresholds_data

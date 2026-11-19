@@ -274,14 +274,18 @@ class TestTempDebounceAndDoControl(unittest.TestCase):
         it must wait until three consecutive readings drop below the threshold (<= setpoint - 0.5).
         """
         # Setpoint = 26.0, tolerance = 0.5 -> low threshold = 25.5
-        # Reading 1: 25.0 (<= 25.5) -> should NOT trigger heating
+        # Start with heating valve closed
+        piUtils.heatingValveOpen = False
+        # Reading 1: 25.0 (<= 25.5) -> should NOT trigger heating or open heating valve
         piUtils.applyTemperatureControl(temperature=25.0, setpoint=26.0, tolerance=0.5, secondary_temp=26.0)
         self.assertFalse(piUtils.heatingSystemActive)
+        self.assertFalse(piUtils.heatingValveOpen)
         self.assertEqual(piUtils._temp_consecutive_low, 1)
 
-        # Reading 2: 24.8 (<= 25.5) -> should NOT trigger heating yet
+        # Reading 2: 24.8 (<= 25.5) -> should NOT trigger heating or open heating valve yet
         piUtils.applyTemperatureControl(temperature=24.8, setpoint=26.0, tolerance=0.5, secondary_temp=26.0)
         self.assertFalse(piUtils.heatingSystemActive)
+        self.assertFalse(piUtils.heatingValveOpen)
         self.assertEqual(piUtils._temp_consecutive_low, 2)
 
         # Reading 3: 24.9 (<= 25.5) -> 3rd consecutive reading triggers heating!

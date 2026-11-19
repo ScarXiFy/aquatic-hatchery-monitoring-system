@@ -258,6 +258,28 @@ assert.strictEqual(isRateOfChangeAdjusting("dissolved_oxygen", 7.6), true, "At 1
 simulatedNow += 61 * 1000;
 assert.strictEqual(isRateOfChangeAdjusting("dissolved_oxygen", 7.6), false, "Over 15 mins, DO adjusting time expired");
 
+// Test system startup mode: remains adjusting for the full 15 minutes even with slow/stalled readings
+const { syncSetpointTimes } = context.window.HatcheryRateOfChange;
+const bootTime = simulatedNow;
+syncSetpointTimes({ temperature: bootTime, dissolved_oxygen: bootTime }, { temperature: true, dissolved_oxygen: true });
+
+assert.strictEqual(setpointTrackers.temperature.active, true, "Startup tracker must be active");
+assert.strictEqual(setpointTrackers.temperature.isSystemStart, true, "Startup flag must be true");
+
+// Feed 20 identical readings (which previously triggered stalled failure after 5 readings)
+for (let i = 0; i < 20; i++) {
+  simulatedNow += 3000; // total 60s
+  assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must NOT abort early for stalled readings");
+}
+
+// 14 minutes later: still within 15 mins -> still adjusting!
+simulatedNow = bootTime + (14 * 60 * 1000);
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must remain active at 14 mins");
+
+// 15 minutes + 1 second later: timeout reached -> triggers expired
+simulatedNow = bootTime + (15 * 60 * 1000) + 1000;
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), false, "Startup adjusting expires after 15 mins");
+
 console.log("ADJUSTING_TIME_15_MINS_TEST_PASSED");
 """
         proc = subprocess.run(

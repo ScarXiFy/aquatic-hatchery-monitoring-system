@@ -1,3 +1,4 @@
+import time
 from flask import Blueprint, jsonify, request, current_app
 from app.api.piUtils import sourceValveState, drainValveState, mainValve, set_lux, setLedIntensity
 import app.api.piUtils as piUtils
@@ -23,6 +24,16 @@ from app.models import (
 )
 
 api_bp = Blueprint("api", __name__)
+
+SERVER_BOOT_TIME_MS = int(time.time() * 1000)
+SETPOINT_UPDATED_AT = {
+    "temperature": SERVER_BOOT_TIME_MS,
+    "dissolved_oxygen": SERVER_BOOT_TIME_MS,
+}
+IS_SYSTEM_START = {
+    "temperature": True,
+    "dissolved_oxygen": True,
+}
 
 CONTROL_STATE = {
     "valves": {
@@ -161,7 +172,10 @@ def get_controls():
         
     return jsonify({
         "valves": CONTROL_STATE["valves"],
-        "sliders": db_sliders
+        "sliders": db_sliders,
+        "setpoint_times": SETPOINT_UPDATED_AT,
+        "is_system_start": IS_SYSTEM_START,
+        "server_time": int(time.time() * 1000),
     })
 
 
@@ -169,9 +183,16 @@ def get_controls():
 def set_sliders():
     payload = request.get_json(silent=True) or {}
     updates = {}
+    now_ms = int(time.time() * 1000)
     for key in ["temperature_setpoint", "dissolved_oxygen_setpoint", "led_intensity"]:
         if key in payload:
             updates[key] = float(payload[key])
+            if key == "temperature_setpoint":
+                SETPOINT_UPDATED_AT["temperature"] = now_ms
+                IS_SYSTEM_START["temperature"] = False
+            elif key == "dissolved_oxygen_setpoint":
+                SETPOINT_UPDATED_AT["dissolved_oxygen"] = now_ms
+                IS_SYSTEM_START["dissolved_oxygen"] = False
             
     if updates:
         db_sliders = update_control_settings(updates)
@@ -188,12 +209,20 @@ def set_sliders():
         if socketio:
             socketio.emit("controls_updated", {
                 "sliders": db_sliders,
-                "valves": CONTROL_STATE["valves"]
+                "valves": CONTROL_STATE["valves"],
+                "setpoint_times": SETPOINT_UPDATED_AT,
+                "is_system_start": IS_SYSTEM_START,
+                "server_time": int(time.time() * 1000),
             })
     except Exception:
         pass
         
-    return jsonify({"sliders": db_sliders})
+    return jsonify({
+        "sliders": db_sliders,
+        "setpoint_times": SETPOINT_UPDATED_AT,
+        "is_system_start": IS_SYSTEM_START,
+        "server_time": int(time.time() * 1000),
+    })
 
 
 @api_bp.post("/controls/led")

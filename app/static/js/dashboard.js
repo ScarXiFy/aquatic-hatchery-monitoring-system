@@ -74,6 +74,7 @@
     temperature: {
       targetSetpoint: 26.0,
       active: false,
+      isSystemStart: false,
       initialValue: null,
       startTime: null,
       readings: [],
@@ -84,6 +85,7 @@
     dissolved_oxygen: {
       targetSetpoint: 7.2,
       active: false,
+      isSystemStart: false,
       initialValue: null,
       startTime: null,
       readings: [],
@@ -113,6 +115,7 @@
             tracker.targetSetpoint = saved.targetSetpoint !== undefined ? Number(saved.targetSetpoint) : tracker.targetSetpoint;
             const isTimedOut = saved.startTime && (now - Number(saved.startTime) > ALLOWED_ADJUSTING_TIME_MS);
             tracker.active = Boolean(saved.active) && !isTimedOut;
+            tracker.isSystemStart = Boolean(saved.isSystemStart) && !isTimedOut;
             tracker.initialValue = saved.initialValue !== null && saved.initialValue !== undefined ? Number(saved.initialValue) : null;
             tracker.startTime = saved.startTime ? Number(saved.startTime) : null;
             tracker.readings = Array.isArray(saved.readings) ? saved.readings : [];
@@ -128,11 +131,48 @@
   loadSetpointTrackers();
 
   /**
+   * Synchronize setpoint timestamps and adjusting mode directly from the server.
+   * Ensures the RPi and remotely connected devices are 100% in sync with the same
+   * elapsed time and adjusting status, preventing desync or premature triggers.
+   */
+  function syncSetpointTimes(serverSetpointTimes, serverIsSystemStart = null) {
+    if (!serverSetpointTimes) return;
+    const now = Date.now();
+    ["temperature", "dissolved_oxygen"].forEach((metric) => {
+      const serverTime = Number(serverSetpointTimes[metric]);
+      if (!serverTime || Number.isNaN(serverTime)) return;
+      const tracker = setpointTrackers[metric];
+      if (!tracker) return;
+
+      const isSystemStart = Boolean(serverIsSystemStart && serverIsSystemStart[metric]);
+      const isTimedOut = (now - serverTime > ALLOWED_ADJUSTING_TIME_MS);
+      tracker.startTime = serverTime;
+
+      const currentVal = latestReading && latestReading[metric] !== undefined && !Number.isNaN(Number(latestReading[metric]))
+        ? Number(latestReading[metric])
+        : null;
+      const warning_limit = metric === "temperature" ? 1.0 : 0.5;
+
+      if (isTimedOut) {
+        tracker.active = false;
+        tracker.isSystemStart = false;
+      } else if (currentVal !== null && Math.abs(currentVal - tracker.targetSetpoint) < warning_limit) {
+        tracker.active = false;
+        tracker.isSystemStart = false;
+      } else {
+        tracker.active = true;
+        tracker.isSystemStart = isSystemStart;
+      }
+    });
+    saveSetpointTrackers();
+  }
+
+  /**
    * Record when temperature or DO setpoint is changed.
    * If current reading differs from new setpoint beyond normal tolerance,
    * activates rate-of-change observation and suppresses immediate alarms.
    */
-  function recordSetpointChange(metric, newSetpoint) {
+  function recordSetpointChange(metric, newSetpoint, explicitStartTime = null, isSystemStart = false) {
     const tracker = setpointTrackers[metric];
     if (!tracker) return;
 
@@ -146,7 +186,8 @@
     const warning_limit = metric === "temperature" ? 1.0 : 0.5;
 
     tracker.targetSetpoint = numTarget;
-    tracker.startTime = Date.now();
+    tracker.startTime = explicitStartTime ? Number(explicitStartTime) : Date.now();
+    tracker.isSystemStart = isSystemStart;
     tracker.stalledCount = 0;
     tracker.wrongDirectionCount = 0;
     tracker.lastRate = 0;
@@ -154,7 +195,7 @@
     if (currentVal === null || Math.abs(currentVal - numTarget) >= warning_limit) {
       tracker.active = true;
       tracker.initialValue = currentVal;
-      tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: Date.now() }] : [];
+      tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: tracker.startTime }] : [];
 
       // Suppress/clear any active alarm for this metric right away when setpoint is changed
       activeAlertsMap.delete(metric);
@@ -167,6 +208,7 @@
       }
     } else {
       tracker.active = false;
+      tracker.isSystemStart = false;
       tracker.initialValue = null;
       tracker.readings = [];
     }
@@ -195,6 +237,7 @@
     // 1. If within warning limit of setpoint, target optimal range has been reached
     if (diff < warning_limit) {
       tracker.active = false;
+      tracker.isSystemStart = false;
       tracker.readings = [];
       tracker.initialValue = null;
       tracker.stalledCount = 0;
@@ -228,6 +271,7 @@
     // Maximum transition duration / allowed adjusting time (15 minutes): if not reached after 15m, trigger alarm
     if (now - tracker.startTime > ALLOWED_ADJUSTING_TIME_MS) {
       tracker.active = false;
+      tracker.isSystemStart = false;
       saveSetpointTrackers();
       return false;
     }
@@ -235,6 +279,12 @@
     // 2. Initial grace / observation window:
     // Do not trigger alarm right away; give actuators and water bulk time to respond (first 4 readings or 15s)
     if (tracker.readings.length <= 4 || (now - tracker.startTime < 15000)) {
+      return true;
+    }
+
+    // When the system newly starts (startup adjusting mode), allow the full 15-minute adjusting limit
+    // without premature stalled / wrong direction abort, since water bulk and actuators require time to respond.
+    if (tracker.isSystemStart) {
       return true;
     }
 
@@ -1164,18 +1214,18 @@
     );
   }
 
-  function updateSliders(sliders) {
+  function updateSliders(sliders, serverSetpointTimes = null, serverIsSystemStart = null) {
     if (!sliders) return;
     const tempSlider = document.querySelector('[data-control-slider="temperature_setpoint"]');
     if (tempSlider && sliders.temperature_setpoint !== undefined) {
       tempSlider.value = sliders.temperature_setpoint;
-      updateControlState(tempSlider);
+      updateControlState(tempSlider, false);
       updateSliderOutput(tempSlider);
     }
     const doSlider = document.querySelector('[data-control-slider="dissolved_oxygen_setpoint"]');
     if (doSlider && sliders.dissolved_oxygen_setpoint !== undefined) {
       doSlider.value = sliders.dissolved_oxygen_setpoint;
-      updateControlState(doSlider);
+      updateControlState(doSlider, false);
       updateSliderOutput(doSlider);
     }
     const ledSlider = document.querySelector('[data-control-slider="led_intensity"]');
@@ -1184,8 +1234,11 @@
       if (index !== -1) {
         ledSlider.value = index;
       }
-      updateControlState(ledSlider);
+      updateControlState(ledSlider, false);
       updateSliderOutput(ledSlider);
+    }
+    if (serverSetpointTimes) {
+      syncSetpointTimes(serverSetpointTimes, serverIsSystemStart);
     }
   }
 
@@ -1200,7 +1253,7 @@
         Object.entries(payload.sliders).forEach(([key, value]) => {
           controlState[key] = Number(value);
         });
-        updateSliders(payload.sliders);
+        updateSliders(payload.sliders, payload.setpoint_times, payload.is_system_start);
       }
       if (payload.valves) {
         document.querySelectorAll("[data-valve]").forEach((button) => {
@@ -1389,13 +1442,15 @@
     return Number(slider.value);
   }
 
-  function updateControlState(slider) {
+  function updateControlState(slider, recordChange = true) {
     const key = slider.dataset.controlSlider;
     const value = sliderPayloadValue(slider);
     controlState[key] = value;
 
     if (key === "temperature_setpoint") {
-      recordSetpointChange("temperature", value);
+      if (recordChange) {
+        recordSetpointChange("temperature", value);
+      }
       const item = thresholds.find((t) => t.metric === "temperature");
       if (item) {
         item.min_value = value;
@@ -1408,7 +1463,9 @@
         checkAlertTriggers(latestReading);
       }
     } else if (key === "dissolved_oxygen_setpoint") {
-      recordSetpointChange("dissolved_oxygen", value);
+      if (recordChange) {
+        recordSetpointChange("dissolved_oxygen", value);
+      }
       const item = thresholds.find((t) => t.metric === "dissolved_oxygen");
       if (item) {
         item.min_value = value;
@@ -1443,17 +1500,17 @@
     if (response.ok) {
       const data = await response.json();
       if (data.sliders) {
-        updateSliders(data.sliders);
+        updateSliders(data.sliders, data.setpoint_times, data.is_system_start);
       }
     }
   }
 
   function bindControls() {
     document.querySelectorAll("[data-control-slider]").forEach((slider) => {
-      updateControlState(slider);
+      updateControlState(slider, false);
       updateSliderOutput(slider);
       slider.addEventListener("input", () => {
-        updateControlState(slider);
+        updateControlState(slider, true);
         updateSliderOutput(slider);
         if (latestReading) {
           updateGauges(latestReading);
@@ -1538,7 +1595,7 @@
         Object.entries(data.sliders).forEach(([key, value]) => {
           controlState[key] = Number(value);
         });
-        updateSliders(data.sliders);
+        updateSliders(data.sliders, data.setpoint_times, data.is_system_start);
         if (data.sliders.temperature_setpoint !== undefined) {
           const tItem = thresholds.find((t) => t.metric === "temperature");
           if (tItem) {
@@ -1805,6 +1862,7 @@
       setpointTrackers,
       recordSetpointChange,
       isRateOfChangeAdjusting,
+      syncSetpointTimes,
       updateNavStatus,
       setThresholds,
       checkAlertTriggers,
