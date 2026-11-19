@@ -41,8 +41,9 @@ class TestTempAndDoAlarmRateOfChange(unittest.TestCase):
         1. Alarm is not triggered right away when temperature setpoint changes.
         2. Progress towards setpoint keeps alarm suppressed.
         3. Target reached completes transition and restores optimal state.
-        4. Wrong direction triggers alarm after observation.
-        5. Stalled condition (no progress) triggers alarm.
+        4. No timer or abort stops adjusting before setpoint is reached:
+           slow, stalled, or reverse readings remain adjusting until setpoint is reached.
+        5. Once reached, subsequent deviation allows alarm to trigger.
         6. Same behavior applies to Dissolved Oxygen (DO).
         """
         node_script = """
@@ -116,25 +117,32 @@ let reachedResult = isRateOfChangeAdjusting("temperature", 27.05);
 assert.strictEqual(reachedResult, false, "Should complete adjusting once target band is reached");
 assert.strictEqual(setpointTrackers.temperature.active, false, "Tracker should be inactive once reached");
 
-// 5. Wrong direction triggers alarm
+// 5. Readings with reverse drift or slow progress remain adjusting until setpoint reached
 recordSetpointChange("temperature", 29.0);
 isRateOfChangeAdjusting("temperature", 27.2);
 simulatedNow += 16000;
 for (let val of [27.0, 26.7, 26.4, 26.1, 25.8, 25.5]) {
   simulatedNow += 3000;
-  isRateOfChangeAdjusting("temperature", val);
+  assert.strictEqual(isRateOfChangeAdjusting("temperature", val), true, "Must remain adjusting despite reverse drift");
 }
-assert.strictEqual(setpointTrackers.temperature.active, false, "Tracker must fail on reverse drift");
+assert.strictEqual(setpointTrackers.temperature.active, true, "Tracker must stay active until setpoint is reached");
 
-// 6. Stalled progress triggers alarm
-recordSetpointChange("temperature", 29.0);
-isRateOfChangeAdjusting("temperature", 26.0);
-simulatedNow += 16000;
+// 6. Stalled progress also remains adjusting without timing out or aborting
 for (let i = 0; i < 15; i++) {
   simulatedNow += 3000;
-  isRateOfChangeAdjusting("temperature", 26.0);
+  assert.strictEqual(isRateOfChangeAdjusting("temperature", 25.5), true, "Must remain adjusting despite stalled readings");
 }
-assert.strictEqual(setpointTrackers.temperature.active, false, "Tracker must fail on stalled progress");
+assert.strictEqual(setpointTrackers.temperature.active, true, "Tracker must stay active without timer limit");
+
+// Reaching setpoint completes adjusting
+simulatedNow += 3000;
+let reached29 = isRateOfChangeAdjusting("temperature", 28.5); // within 1.0 of 29.0
+assert.strictEqual(reached29, false, "Should complete adjusting once setpoint is reached");
+assert.strictEqual(setpointTrackers.temperature.active, false, "Tracker should be inactive once reached");
+
+// Once setpoint has been reached, a subsequent deviation allows alarm to trigger
+let deviated = isRateOfChangeAdjusting("temperature", 26.0);
+assert.strictEqual(deviated, false, "Subsequent deviation must not be adjusting, allowing alarm to trigger");
 
 // 7. Dissolved Oxygen (DO) setpoint change (7.2 -> 8.5 mg/L)
 recordSetpointChange("dissolved_oxygen", 8.5);

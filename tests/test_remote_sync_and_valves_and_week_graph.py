@@ -179,9 +179,12 @@ console.log("WEEK_GRAPH_NULL_TEST_PASSED");
 
 
 class TestAllowedAdjustingTime(unittest.TestCase):
-    def test_allowed_adjusting_time_is_15_mins(self):
+    def test_adjusting_persists_without_timer_until_setpoint_reached(self):
         """
-        Verify that allowed adjusting time for DO and temperature is set to 15 mins (900,000 ms).
+        Verify that there is no timer to stop adjusting status:
+        DO and temperature remain adjusting indefinitely without expiring after 15 minutes,
+        and critical/warning alarms are suppressed until the setpoint is reached.
+        Once the setpoint is reached, subsequent deviation can trigger an alarm.
         """
         dashboard_js_path = Path(__file__).resolve().parent.parent / "app" / "static" / "js" / "dashboard.js"
         node_script = """
@@ -234,31 +237,32 @@ const context = vm.createContext({
 
 vm.runInContext(code, context);
 
-const { ALLOWED_ADJUSTING_TIME_MS, recordSetpointChange, isRateOfChangeAdjusting, setpointTrackers } = context.window.HatcheryRateOfChange;
+const { recordSetpointChange, isRateOfChangeAdjusting, setpointTrackers } = context.window.HatcheryRateOfChange;
 
-// Must be exactly 15 minutes = 15 * 60 * 1000 ms
-assert.strictEqual(ALLOWED_ADJUSTING_TIME_MS, 15 * 60 * 1000, "ALLOWED_ADJUSTING_TIME_MS must be 15 mins (900000 ms)");
-
-// Test temperature adjusting at 14 mins: still active / adjusting
+// Test temperature adjusting: setpoint 28.0, reading 26.0
 recordSetpointChange("temperature", 28.0);
 isRateOfChangeAdjusting("temperature", 26.0);
-simulatedNow += 14 * 60 * 1000; // 14 mins later
-assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.5), true, "At 14 mins, adjusting should still be allowed");
 
-// At 15 mins + 1 second: timeout reached
-simulatedNow += 61 * 1000; // 15 mins 1 sec
-assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.5), false, "Over 15 mins, adjusting time expired");
+// Advance 14 minutes: still adjusting
+simulatedNow += 14 * 60 * 1000;
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.5), true, "At 14 mins, adjusting should still be active");
 
-// Test DO adjusting at 14 mins: still active / adjusting
+// Advance past 15 minutes (e.g. 20 minutes, 60 minutes): still adjusting because setpoint has not been reached!
+simulatedNow += 6 * 60 * 1000; // 20 mins total
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.5), true, "At 20 mins, adjusting must NOT time out");
+
+simulatedNow += 40 * 60 * 1000; // 60 mins total
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.5), true, "At 60 mins, adjusting must NOT time out");
+assert.strictEqual(setpointTrackers.temperature.active, true, "Tracker active flag must remain true");
+
+// Test DO adjusting: setpoint 8.5, reading 7.2
 recordSetpointChange("dissolved_oxygen", 8.5);
 isRateOfChangeAdjusting("dissolved_oxygen", 7.2);
-simulatedNow += 14 * 60 * 1000;
-assert.strictEqual(isRateOfChangeAdjusting("dissolved_oxygen", 7.6), true, "At 14 mins, DO adjusting should still be allowed");
+simulatedNow += 30 * 60 * 1000; // 30 mins later
+assert.strictEqual(isRateOfChangeAdjusting("dissolved_oxygen", 7.6), true, "DO adjusting must NOT time out after 30 mins");
+assert.strictEqual(setpointTrackers.dissolved_oxygen.active, true, "DO tracker active flag must remain true");
 
-simulatedNow += 61 * 1000;
-assert.strictEqual(isRateOfChangeAdjusting("dissolved_oxygen", 7.6), false, "Over 15 mins, DO adjusting time expired");
-
-// Test system startup mode: remains adjusting for the full 15 minutes even with slow/stalled readings
+// Test system startup mode: remains adjusting without timing out
 const { syncSetpointTimes } = context.window.HatcheryRateOfChange;
 const bootTime = simulatedNow;
 syncSetpointTimes({ temperature: bootTime, dissolved_oxygen: bootTime }, { temperature: true, dissolved_oxygen: true });
@@ -266,21 +270,26 @@ syncSetpointTimes({ temperature: bootTime, dissolved_oxygen: bootTime }, { tempe
 assert.strictEqual(setpointTrackers.temperature.active, true, "Startup tracker must be active");
 assert.strictEqual(setpointTrackers.temperature.isSystemStart, true, "Startup flag must be true");
 
-// Feed 20 identical readings (which previously triggered stalled failure after 5 readings)
+// Feed identical readings: does not abort
 for (let i = 0; i < 20; i++) {
-  simulatedNow += 3000; // total 60s
-  assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must NOT abort early for stalled readings");
+  simulatedNow += 3000;
+  assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must NOT abort for stalled readings");
 }
 
-// 14 minutes later: still within 15 mins -> still adjusting!
-simulatedNow = bootTime + (14 * 60 * 1000);
-assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must remain active at 14 mins");
+// 60 minutes later: still within adjusting mode
+simulatedNow = bootTime + (60 * 60 * 1000);
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), true, "Startup adjusting must remain active indefinitely until setpoint reached");
 
-// 15 minutes + 1 second later: timeout reached -> triggers expired
-simulatedNow = bootTime + (15 * 60 * 1000) + 1000;
-assert.strictEqual(isRateOfChangeAdjusting("temperature", 24.0), false, "Startup adjusting expires after 15 mins");
+// Now reaching setpoint (< 1.0 diff, e.g. 27.5 for setpoint 28.0)
+let tempReached = isRateOfChangeAdjusting("temperature", 27.5);
+assert.strictEqual(tempReached, false, "Should complete adjusting once setpoint is reached");
+assert.strictEqual(setpointTrackers.temperature.active, false, "Tracker should become inactive once reached");
 
-console.log("ADJUSTING_TIME_15_MINS_TEST_PASSED");
+// Once reached, a subsequent deviation from setpoint allows alarm to trigger
+let tempDeviated = isRateOfChangeAdjusting("temperature", 24.0);
+assert.strictEqual(tempDeviated, false, "Subsequent deviation must not be adjusting, allowing alarm to trigger");
+
+console.log("ADJUSTING_PERSISTS_WITHOUT_TIMER_TEST_PASSED");
 """
         proc = subprocess.run(
             ["node", "-e", node_script, str(dashboard_js_path)],
@@ -288,7 +297,7 @@ console.log("ADJUSTING_TIME_15_MINS_TEST_PASSED");
             text=True
         )
         self.assertEqual(proc.returncode, 0, f"Node test failed: {proc.stderr}\n{proc.stdout}")
-        self.assertIn("ADJUSTING_TIME_15_MINS_TEST_PASSED", proc.stdout)
+        self.assertIn("ADJUSTING_PERSISTS_WITHOUT_TIMER_TEST_PASSED", proc.stdout)
 
 
 if __name__ == "__main__":

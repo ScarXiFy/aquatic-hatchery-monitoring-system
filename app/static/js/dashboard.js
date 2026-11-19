@@ -27,8 +27,8 @@
 
   const STORAGE_KEY_SETPOINT_TRACKERS = "hatchery:setpoint-trackers";
   const STORAGE_KEY_THRESHOLDS = "hatchery:thresholds";
-  const ALLOWED_ADJUSTING_TIME_MS = 15 * 60 * 1000; // 15 mins allowed adjusting time for DO and temperature
-  const MAX_TRANSITION_MS = ALLOWED_ADJUSTING_TIME_MS;
+  const ALLOWED_ADJUSTING_TIME_MS = null; // No timer to stop adjusting status; adjusting persists until setpoint is reached
+  const MAX_TRANSITION_MS = null;
 
   function getStoredItem(key) {
     try {
@@ -74,6 +74,7 @@
     temperature: {
       targetSetpoint: 26.0,
       active: false,
+      hasReachedSetpoint: false,
       isSystemStart: false,
       initialValue: null,
       startTime: null,
@@ -85,6 +86,7 @@
     dissolved_oxygen: {
       targetSetpoint: 7.2,
       active: false,
+      hasReachedSetpoint: false,
       isSystemStart: false,
       initialValue: null,
       startTime: null,
@@ -107,15 +109,14 @@
       if (!raw) return;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
-        const now = Date.now();
         ["temperature", "dissolved_oxygen"].forEach((metric) => {
           if (parsed[metric] && typeof parsed[metric] === "object") {
             const saved = parsed[metric];
             const tracker = setpointTrackers[metric];
             tracker.targetSetpoint = saved.targetSetpoint !== undefined ? Number(saved.targetSetpoint) : tracker.targetSetpoint;
-            const isTimedOut = saved.startTime && (now - Number(saved.startTime) > ALLOWED_ADJUSTING_TIME_MS);
-            tracker.active = Boolean(saved.active) && !isTimedOut;
-            tracker.isSystemStart = Boolean(saved.isSystemStart) && !isTimedOut;
+            tracker.active = Boolean(saved.active);
+            tracker.hasReachedSetpoint = Boolean(saved.hasReachedSetpoint);
+            tracker.isSystemStart = Boolean(saved.isSystemStart);
             tracker.initialValue = saved.initialValue !== null && saved.initialValue !== undefined ? Number(saved.initialValue) : null;
             tracker.startTime = saved.startTime ? Number(saved.startTime) : null;
             tracker.readings = Array.isArray(saved.readings) ? saved.readings : [];
@@ -132,12 +133,13 @@
 
   /**
    * Synchronize setpoint timestamps and adjusting mode directly from the server.
-   * Ensures the RPi and remotely connected devices are 100% in sync with the same
-   * elapsed time and adjusting status, preventing desync or premature triggers.
+   * Ensures the RPi and remotely connected devices are in sync.
+   * There is no timer to stop adjusting: temperature and DO remain in adjusting status
+   * until the reading reaches within the setpoint. Once reached, adjusting ends,
+   * and any subsequent deviation will trigger an alarm.
    */
   function syncSetpointTimes(serverSetpointTimes, serverIsSystemStart = null) {
     if (!serverSetpointTimes) return;
-    const now = Date.now();
     ["temperature", "dissolved_oxygen"].forEach((metric) => {
       const serverTime = Number(serverSetpointTimes[metric]);
       if (!serverTime || Number.isNaN(serverTime)) return;
@@ -145,7 +147,7 @@
       if (!tracker) return;
 
       const isSystemStart = Boolean(serverIsSystemStart && serverIsSystemStart[metric]);
-      const isTimedOut = (now - serverTime > ALLOWED_ADJUSTING_TIME_MS);
+      const isNewSetpointTime = tracker.startTime !== serverTime;
       tracker.startTime = serverTime;
 
       const currentVal = latestReading && latestReading[metric] !== undefined && !Number.isNaN(Number(latestReading[metric]))
@@ -153,15 +155,14 @@
         : null;
       const warning_limit = metric === "temperature" ? 1.0 : 0.5;
 
-      if (isTimedOut) {
+      if (currentVal !== null && Math.abs(currentVal - tracker.targetSetpoint) < warning_limit) {
         tracker.active = false;
         tracker.isSystemStart = false;
-      } else if (currentVal !== null && Math.abs(currentVal - tracker.targetSetpoint) < warning_limit) {
-        tracker.active = false;
-        tracker.isSystemStart = false;
-      } else {
+        tracker.hasReachedSetpoint = true;
+      } else if (isNewSetpointTime) {
         tracker.active = true;
         tracker.isSystemStart = isSystemStart;
+        tracker.hasReachedSetpoint = false;
       }
     });
     saveSetpointTrackers();
@@ -170,7 +171,8 @@
   /**
    * Record when temperature or DO setpoint is changed.
    * If current reading differs from new setpoint beyond normal tolerance,
-   * activates rate-of-change observation and suppresses immediate alarms.
+   * activates adjusting mode and suppresses immediate alarms until
+   * the parameter reaches within its setpoint.
    */
   function recordSetpointChange(metric, newSetpoint, explicitStartTime = null, isSystemStart = false) {
     const tracker = setpointTrackers[metric];
@@ -194,6 +196,7 @@
 
     if (currentVal === null || Math.abs(currentVal - numTarget) >= warning_limit) {
       tracker.active = true;
+      tracker.hasReachedSetpoint = false;
       tracker.initialValue = currentVal;
       tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: tracker.startTime }] : [];
 
@@ -208,6 +211,7 @@
       }
     } else {
       tracker.active = false;
+      tracker.hasReachedSetpoint = true;
       tracker.isSystemStart = false;
       tracker.initialValue = null;
       tracker.readings = [];
@@ -216,9 +220,10 @@
   }
 
   /**
-   * Observe rate of change for temperature and DO following a setpoint change.
-   * Returns true if alarm should be suppressed (system is in initial observation window or progressing toward setpoint).
-   * Returns false if normal alarm behavior applies (target reached, stalled, or moving in wrong direction).
+   * Check adjusting status for temperature and DO following a setpoint change.
+   * Critical/warning alerts are not triggered by the parameter until it has reached its setpoint;
+   * there is no timer to stop the adjusting status. Once the parameter has reached within its setpoint,
+   * adjusting ends, and any subsequent deviation will trigger an alarm.
    */
   function isRateOfChangeAdjusting(metric, currentValue) {
     const tracker = setpointTrackers[metric];
@@ -237,6 +242,7 @@
     // 1. If within warning limit of setpoint, target optimal range has been reached
     if (diff < warning_limit) {
       tracker.active = false;
+      tracker.hasReachedSetpoint = true;
       tracker.isSystemStart = false;
       tracker.readings = [];
       tracker.initialValue = null;
@@ -251,7 +257,7 @@
     // If initialValue was not known at slider change time, set it on first reading
     if (tracker.initialValue === null) {
       tracker.initialValue = val;
-      tracker.startTime = now;
+      tracker.startTime = tracker.startTime || now;
       tracker.readings = [{ value: val, timestamp: now }];
       saveSetpointTrackers();
       return true;
@@ -268,98 +274,17 @@
       saveSetpointTrackers();
     }
 
-    // Maximum transition duration / allowed adjusting time (15 minutes): if not reached after 15m, trigger alarm
-    if (now - tracker.startTime > ALLOWED_ADJUSTING_TIME_MS) {
-      tracker.active = false;
-      tracker.isSystemStart = false;
-      saveSetpointTrackers();
-      return false;
+    // Rate calculation for tracker.lastRate (informational)
+    if (tracker.readings.length >= 2) {
+      const windowSlice = tracker.readings.slice(-5);
+      const firstInWindow = windowSlice[0];
+      const latestInWindow = windowSlice[windowSlice.length - 1];
+      const dtSeconds = Math.max(1, (latestInWindow.timestamp - firstInWindow.timestamp) / 1000);
+      const dVal = latestInWindow.value - firstInWindow.value;
+      tracker.lastRate = dVal / dtSeconds;
     }
 
-    // 2. Initial grace / observation window:
-    // Do not trigger alarm right away; give actuators and water bulk time to respond (first 4 readings or 15s)
-    if (tracker.readings.length <= 4 || (now - tracker.startTime < 15000)) {
-      return true;
-    }
-
-    // When the system newly starts (startup adjusting mode), allow the full 15-minute adjusting limit
-    // without premature stalled / wrong direction abort, since water bulk and actuators require time to respond.
-    if (tracker.isSystemStart) {
-      return true;
-    }
-
-    // 3. Compute rate of change over recent window (last 4-5 readings)
-    const windowSlice = tracker.readings.slice(-5);
-    const firstInWindow = windowSlice[0];
-    const latestInWindow = windowSlice[windowSlice.length - 1];
-    const dtSeconds = Math.max(1, (latestInWindow.timestamp - firstInWindow.timestamp) / 1000);
-    const dVal = latestInWindow.value - firstInWindow.value;
-    const rate = dVal / dtSeconds;
-    tracker.lastRate = rate;
-
-    const targetIsHigher = tracker.targetSetpoint > tracker.initialValue;
-    const noiseTolerance = metric === "temperature" ? 0.05 : 0.03;
-    const wrongDirectionThreshold = metric === "temperature" ? 0.08 : 0.04;
-
-    // 4. Direction and progress evaluation
-    if (targetIsHigher) {
-      // Need heating or increasing DO: expected rate is positive or value moving towards target
-      const isMovingWrongWay = dVal < -wrongDirectionThreshold || latestInWindow.value < tracker.initialValue - wrongDirectionThreshold;
-      if (isMovingWrongWay) {
-        tracker.wrongDirectionCount++;
-        if (tracker.wrongDirectionCount >= 3) {
-          tracker.active = false;
-          saveSetpointTrackers();
-          return false;
-        }
-      } else {
-        tracker.wrongDirectionCount = Math.max(0, tracker.wrongDirectionCount - 1);
-      }
-
-      // Check for stalled condition after at least 8 readings (~24s)
-      if (tracker.readings.length >= 8) {
-        const progressFromStart = latestInWindow.value - tracker.initialValue;
-        if (progressFromStart < noiseTolerance && Math.abs(dVal) < noiseTolerance) {
-          tracker.stalledCount++;
-          if (tracker.stalledCount >= 5) {
-            tracker.active = false;
-            saveSetpointTrackers();
-            return false;
-          }
-        } else {
-          tracker.stalledCount = Math.max(0, tracker.stalledCount - 1);
-        }
-      }
-    } else {
-      // Need cooling or decreasing DO: expected rate is negative or value moving towards target
-      const isMovingWrongWay = dVal > wrongDirectionThreshold || latestInWindow.value > tracker.initialValue + wrongDirectionThreshold;
-      if (isMovingWrongWay) {
-        tracker.wrongDirectionCount++;
-        if (tracker.wrongDirectionCount >= 3) {
-          tracker.active = false;
-          saveSetpointTrackers();
-          return false;
-        }
-      } else {
-        tracker.wrongDirectionCount = Math.max(0, tracker.wrongDirectionCount - 1);
-      }
-
-      // Check for stalled condition
-      if (tracker.readings.length >= 8) {
-        const progressFromStart = tracker.initialValue - latestInWindow.value;
-        if (progressFromStart < noiseTolerance && Math.abs(dVal) < noiseTolerance) {
-          tracker.stalledCount++;
-          if (tracker.stalledCount >= 5) {
-            tracker.active = false;
-            saveSetpointTrackers();
-            return false;
-          }
-        } else {
-          tracker.stalledCount = Math.max(0, tracker.stalledCount - 1);
-        }
-      }
-    }
-
+    // Remains adjusting without any timeout until target setpoint is reached
     return true;
   }
 
@@ -909,7 +834,7 @@
       const paramName = metricDisplayNames[metric];
 
       if (isAdjusting) {
-        // Temperature or DO setpoint was changed: alarm is not triggered right away, observing rate of change
+        // Temperature or DO is adjusting toward setpoint: alarm is suppressed until setpoint is reached
         activeAlertsMap.delete(metric);
         dismissedAlertKeys.delete(`${metric}_WARNING`);
         dismissedAlertKeys.delete(`${metric}_CRITICAL`);
