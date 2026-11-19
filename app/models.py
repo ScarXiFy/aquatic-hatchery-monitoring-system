@@ -73,11 +73,17 @@ SENSOR_LIMITS = {
 # Calibration Database Management
 # ---------------------------------------------------------------------------
 
+_calibrations_ensured = False
+
 def ensure_default_calibrations(db=None):
     """
     Ensures that default starting calibration entries exist for each of the 5 sensors
     in both the unified sensor_calibrations table and the dedicated sensor tables.
     """
+    global _calibrations_ensured
+    if _calibrations_ensured and db is None:
+        return
+
     if db is None:
         db = get_db()
 
@@ -126,6 +132,7 @@ def ensure_default_calibrations(db=None):
                     (defaults["slope"], defaults["offset"], created_at),
                 )
     db.commit()
+    _calibrations_ensured = True
 
 
 def get_latest_calibration(sensor: str, db=None) -> dict:
@@ -799,22 +806,28 @@ def update_thresholds(updates):
 # Notifications
 # ---------------------------------------------------------------------------
 
-def cleanup_old_notifications():
-    local_now = datetime.now().astimezone()
-    start_of_local_today = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
-    start_utc_str = start_of_local_today.astimezone(timezone.utc).isoformat(timespec="seconds")
+def cleanup_old_notifications(db=None):
+    try:
+        local_now = datetime.now().astimezone()
+        start_of_local_today = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+        start_utc_str = start_of_local_today.astimezone(timezone.utc).isoformat(timespec="seconds")
 
-    db = get_db()
-    db.execute(
-        "DELETE FROM notifications WHERE datetime(created_at) < datetime(?)",
-        (start_utc_str,),
-    )
-    db.commit()
+        if db is None:
+            db = get_db()
+        db.execute(
+            "DELETE FROM notifications WHERE datetime(created_at) < datetime(?)",
+            (start_utc_str,),
+        )
+        db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to cleanup old notifications: {e}")
 
 
-def create_notification(data):
-    cleanup_old_notifications()
-    db = get_db()
+def create_notification(data, db=None):
+    cleanup_old_notifications(db=db)
+    if db is None:
+        db = get_db()
     created_at = data.get("created_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")
     cursor = db.execute(
         """
@@ -853,15 +866,21 @@ def create_notification(data):
     }
 
 
-def get_notifications():
-    cleanup_old_notifications()
-    db = get_db()
+def get_notifications(db=None):
+    if db is None:
+        db = get_db()
+    local_now = datetime.now().astimezone()
+    start_of_local_today = datetime.combine(local_now.date(), datetime.min.time()).replace(tzinfo=local_now.tzinfo)
+    start_utc_str = start_of_local_today.astimezone(timezone.utc).isoformat(timespec="seconds")
+
     rows = db.execute(
         """
         SELECT id, parameter, status, current_value, threshold_value, message, created_at, is_read, is_dismissed
         FROM notifications
+        WHERE datetime(created_at) >= datetime(?)
         ORDER BY datetime(created_at) DESC, id DESC
-        """
+        """,
+        (start_utc_str,),
     ).fetchall()
 
     notifications = [
@@ -883,12 +902,16 @@ def get_notifications():
     return notifications, unread_count
 
 
-def mark_notifications_read():
-    cleanup_old_notifications()
-    db = get_db()
-    db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
-    db.commit()
-    return get_notifications()
+def mark_notifications_read(db=None):
+    if db is None:
+        db = get_db()
+    try:
+        db.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+        db.commit()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to mark notifications read: {e}")
+    return get_notifications(db=db)
 
 
 def clear_all_notifications():

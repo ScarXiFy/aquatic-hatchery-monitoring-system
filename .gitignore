@@ -1,3 +1,9 @@
-hatchery.db
+hatchery.db*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 __pycache__/
 *.py[cod]
+.DS_Store

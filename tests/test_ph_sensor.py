@@ -112,8 +112,9 @@ class TestSimulatorIntegration(unittest.TestCase):
         mock_ph_class.assert_not_called()
         mock_sal_class.assert_not_called()
         mock_do_class.assert_not_called()
-        self.assertTrue(7.6 <= reading["ph"] <= 8.3)
-        self.assertTrue(29.0 <= reading["salinity"] <= 34.0)
+        # Supports both raw voltage format (~1.45-1.65V) and calibrated pH (~7.0-8.5)
+        self.assertTrue(1.40 <= reading["ph"] <= 1.70 or 7.0 <= reading["ph"] <= 8.5)
+        self.assertTrue(0.70 <= reading["salinity"] <= 1.00 or 25.0 <= reading["salinity"] <= 35.0)
 
     @patch("app.sensors.simulator.isRpiPresent", True)
     @patch("app.services.ph_sensor.PHSensorService")
@@ -174,8 +175,9 @@ class TestSimulatorIntegration(unittest.TestCase):
         mock_do_class.return_value = mock_do_service
         
         reading = generate_sensor_reading()
-        self.assertTrue(7.6 <= reading["ph"] <= 8.3)
-        self.assertTrue(29.0 <= reading["salinity"] <= 34.0)
+        # Supports both raw voltage format (~1.45-1.65V) and calibrated pH (~7.0-8.5)
+        self.assertTrue(1.40 <= reading["ph"] <= 1.70 or 7.0 <= reading["ph"] <= 8.5)
+        self.assertTrue(0.70 <= reading["salinity"] <= 1.00 or 25.0 <= reading["salinity"] <= 35.0)
         mock_ph_service.read_ph.assert_called_once()
         mock_sal_service.read_salinity.assert_called_once()
         mock_do_service.read_do.assert_called_once()

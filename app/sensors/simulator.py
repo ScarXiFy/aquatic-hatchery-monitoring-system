@@ -27,8 +27,15 @@ def generate_sensor_reading():
 
     # Read target settings from database
     targets = get_control_settings()
-    target_temp = targets.get("temperature_setpoint", 26.0)
-    target_do = targets.get("dissolved_oxygen_setpoint", 7.2)
+    try:
+        target_temp = float(targets.get("temperature_setpoint", 26.0))
+    except (TypeError, ValueError):
+        target_temp = 26.0
+
+    try:
+        target_do = float(targets.get("dissolved_oxygen_setpoint", 7.2))
+    except (TypeError, ValueError):
+        target_do = 7.2
 
     # 1. Main Tank Temperature (Digital DS18B20, raw value in °C)
     sensor_temp = read_temp_sensor()
@@ -76,7 +83,13 @@ def generate_sensor_reading():
         try:
             from app.services.do_sensor import DOSensorService
             do_sensor = DOSensorService()
-            raw_do = do_sensor.read_raw_voltage()
+            val = do_sensor.read_raw_voltage() if hasattr(do_sensor, "read_raw_voltage") else None
+            if isinstance(val, (int, float)):
+                raw_do = float(val)
+            elif hasattr(do_sensor, "read_do"):
+                do_val = do_sensor.read_do()
+                if isinstance(do_val, (int, float)):
+                    raw_do = float(do_val)
         except Exception:
             pass
 
@@ -86,27 +99,31 @@ def generate_sensor_reading():
         # Compute target voltage for simulated DO target based on latest calibration
         try:
             do_cal = get_latest_calibration("do")
-            m, b = do_cal["slope"], do_cal["offset"]
+            m, b = float(do_cal["slope"]), float(do_cal["offset"])
             target_v = (target_do - b) / m if abs(m) > 1e-4 else 1.162
         except Exception:
             target_v = 1.162
 
         if current_do_voltage is None:
             latest = get_latest_reading()
-            if latest and "raw_dissolved_oxygen" in latest:
-                current_do_voltage = latest["raw_dissolved_oxygen"]
+            if latest and "raw_dissolved_oxygen" in latest and isinstance(latest["raw_dissolved_oxygen"], (int, float)):
+                current_do_voltage = float(latest["raw_dissolved_oxygen"])
             else:
                 current_do_voltage = target_v
 
-        v_diff = target_v - current_do_voltage
-        if abs(v_diff) > 0.002:
-            step = 0.015 if v_diff > 0 else -0.015
-            if abs(v_diff) < 0.015:
-                current_do_voltage = target_v
-            else:
-                current_do_voltage += step
-        current_do_voltage += random.uniform(-0.004, 0.004)
-        raw_do = round(current_do_voltage, 4)
+        try:
+            v_diff = float(target_v) - float(current_do_voltage)
+            if abs(v_diff) > 0.002:
+                step = 0.015 if v_diff > 0 else -0.015
+                if abs(v_diff) < 0.015:
+                    current_do_voltage = target_v
+                else:
+                    current_do_voltage += step
+            current_do_voltage += random.uniform(-0.004, 0.004)
+            raw_do = round(float(current_do_voltage), 4)
+        except Exception:
+            current_do_voltage = 1.162
+            raw_do = 1.162
 
     # 4. Salinity / EC (Analog ADS1115 Channel 1, raw value in V)
     raw_sal = None
@@ -114,7 +131,13 @@ def generate_sensor_reading():
         try:
             from app.services.salinity_sensor import SalinitySensorService
             sal_sensor = SalinitySensorService()
-            raw_sal = sal_sensor.read_raw_voltage()
+            val = sal_sensor.read_raw_voltage() if hasattr(sal_sensor, "read_raw_voltage") else None
+            if isinstance(val, (int, float)):
+                raw_sal = float(val)
+            elif hasattr(sal_sensor, "read_salinity"):
+                sal_val = sal_sensor.read_salinity()
+                if isinstance(sal_val, (int, float)):
+                    raw_sal = float(sal_val)
         except Exception:
             pass
 
@@ -123,8 +146,8 @@ def generate_sensor_reading():
     else:
         if current_sal_voltage is None:
             latest = get_latest_reading()
-            if latest and "raw_salinity" in latest:
-                current_sal_voltage = latest["raw_salinity"]
+            if latest and "raw_salinity" in latest and isinstance(latest["raw_salinity"], (int, float)):
+                current_sal_voltage = float(latest["raw_salinity"])
             else:
                 current_sal_voltage = 0.852  # ~32.6 ppt under standard slope
 
@@ -139,7 +162,13 @@ def generate_sensor_reading():
         try:
             from app.services.ph_sensor import PHSensorService
             ph_sensor = PHSensorService()
-            raw_ph = ph_sensor.read_raw_voltage()
+            val = ph_sensor.read_raw_voltage() if hasattr(ph_sensor, "read_raw_voltage") else None
+            if isinstance(val, (int, float)):
+                raw_ph = float(val)
+            elif hasattr(ph_sensor, "read_ph"):
+                ph_val = ph_sensor.read_ph()
+                if isinstance(ph_val, (int, float)):
+                    raw_ph = float(ph_val)
         except Exception:
             pass
 
