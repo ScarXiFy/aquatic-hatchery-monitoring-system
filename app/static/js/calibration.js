@@ -310,6 +310,7 @@
 
   function openModal() {
     loadSavedCalibrations();
+    syncCalibrationsWithBackend();
     modalOverlay.hidden = false;
     document.body.classList.add("modal-open");
     selectSensor(currentSensorKey);
@@ -696,6 +697,23 @@
       commissioned: true,
     });
 
+    // Push new calibration equation to the backend API
+    fetch("/api/calibrations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("HTTP error " + res.status);
+        return res.json();
+      })
+      .then((data) => {
+        console.log("[Calibration UI] Backend calibration updated successfully:", data);
+      })
+      .catch((err) => {
+        console.warn("[Calibration UI] Error sending calibration to backend:", err);
+      });
+
     // Animate commission button state
     if (commissionBtn) {
       commissionBtn.classList.add("commissioning");
@@ -820,6 +838,22 @@
     const config = SENSOR_CONFIGS[sensorKey];
     if (window.HATCHERY_LATEST_READING) {
       const r = window.HATCHERY_LATEST_READING;
+
+      // Prefer exact raw sensor readings sent from backend (raw voltages / temps)
+      if (r.raw) {
+        if (sensorKey === "temp" && r.raw.temperature !== undefined) return Number(r.raw.temperature);
+        if (sensorKey === "mixing_temp" && r.raw.mixing_temperature !== undefined) return Number(r.raw.mixing_temperature);
+        if (sensorKey === "ph" && r.raw.ph !== undefined) return Number(r.raw.ph);
+        if (sensorKey === "do" && r.raw.dissolved_oxygen !== undefined) return Number(r.raw.dissolved_oxygen);
+        if (sensorKey === "salinity" && r.raw.salinity !== undefined) return Number(r.raw.salinity);
+      }
+      if (sensorKey === "temp" && r.raw_temperature !== undefined) return Number(r.raw_temperature);
+      if (sensorKey === "mixing_temp" && r.raw_mixing_temperature !== undefined) return Number(r.raw_mixing_temperature);
+      if (sensorKey === "ph" && r.raw_ph !== undefined) return Number(r.raw_ph);
+      if (sensorKey === "do" && r.raw_dissolved_oxygen !== undefined) return Number(r.raw_dissolved_oxygen);
+      if (sensorKey === "salinity" && r.raw_salinity !== undefined) return Number(r.raw_salinity);
+
+      // Fallbacks
       if (sensorKey === "temp" && r.temperature !== undefined) {
         return Number(r.temperature);
       }
@@ -905,6 +939,37 @@
     }
   }
 
+  // Synchronize active calibrations with backend DB
+  function syncCalibrationsWithBackend() {
+    fetch("/api/calibrations")
+      .then((res) => {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then((data) => {
+        if (data && data.calibrations) {
+          for (const [key, item] of Object.entries(data.calibrations)) {
+            if (item && item.slope !== undefined && item.offset !== undefined) {
+              activeCalibrations[key] = {
+                slope: item.slope,
+                offset: item.offset,
+                appliedAt: item.created_at,
+                commissioned: true,
+              };
+            }
+          }
+          try {
+            localStorage.setItem(STORAGE_KEY_CALIBRATION, JSON.stringify(activeCalibrations));
+          } catch (e) {}
+          updateLiveDisplay();
+          updateEquationSection();
+        }
+      })
+      .catch((err) => {
+        // Backend not reachable or in static test
+      });
+  }
+
   // Hook socket if available
   function hookSocket() {
     if (window.hatcherySocket) {
@@ -928,6 +993,7 @@
   document.addEventListener("DOMContentLoaded", () => {
     initDOM();
     loadSavedCalibrations();
+    syncCalibrationsWithBackend();
     hookSocket();
   });
 })();

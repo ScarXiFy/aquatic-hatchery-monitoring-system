@@ -1,29 +1,54 @@
 import sqlite3
 from pathlib import Path
 
-from flask import current_app, g
+try:
+    from flask import current_app, g
+except ImportError:
+    current_app = None
+    g = None
 
 
 def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(
-            current_app.config["DATABASE"],
-            timeout=30.0,
-            check_same_thread=False,
-        )
-        g.db.row_factory = sqlite3.Row
-        try:
-            g.db.execute("PRAGMA journal_mode=WAL")
-            g.db.execute("PRAGMA synchronous=NORMAL")
-        except Exception:
-            pass
-    return g.db
+    try:
+        if g is not None and "db" not in g:
+            g.db = sqlite3.connect(
+                current_app.config["DATABASE"],
+                timeout=30.0,
+                check_same_thread=False,
+            )
+            g.db.row_factory = sqlite3.Row
+            try:
+                g.db.execute("PRAGMA journal_mode=WAL")
+                g.db.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+        if g is not None:
+            return g.db
+    except (RuntimeError, AttributeError):
+        pass
+
+    # Fallback when outside Flask context
+    base_dir = Path(__file__).resolve().parent.parent
+    db_path = base_dir / "hatchery.db"
+    conn = sqlite3.connect(
+        str(db_path),
+        timeout=30.0,
+        check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
+    return conn
 
 
 def close_db(error=None):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+    if g is not None:
+        db = g.pop("db", None)
+        if db is not None:
+            db.close()
 
 
 def init_db(app):
@@ -37,7 +62,11 @@ def init_db(app):
             db.executescript(schema_file.read())
         db.commit()
 
-        from app.models import cleanup_old_notifications, init_motor_state
+        from app.models import (
+            cleanup_old_notifications,
+            init_motor_state,
+            ensure_default_calibrations,
+        )
         cleanup_old_notifications()
         init_motor_state()
-
+        ensure_default_calibrations()

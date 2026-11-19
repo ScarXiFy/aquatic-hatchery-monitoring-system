@@ -1,5 +1,10 @@
 import logging
-from flask import current_app
+
+try:
+    from flask import current_app
+except ImportError:
+    current_app = None
+
 from app.services.adc_service import ADCService
 
 logger = logging.getLogger(__name__)
@@ -9,20 +14,38 @@ class SalinitySensorService:
     def __init__(self, adc_service=None):
         self.adc_service = adc_service or ADCService()
 
+    def read_raw_voltage(self) -> float:
+        """
+        Reads filtered raw analog voltage from ADC Channel 1.
+        Returns float voltage (V).
+        """
+        channel = 1
+        try:
+            if current_app:
+                channel = current_app.config.get("SALINITY_ADC_CHANNEL", 1)
+        except (RuntimeError, AttributeError):
+            pass
+        return self.adc_service.read_filtered_voltage(channel)
+
     def _voltage_to_salinity(
         self,
         voltage: float,
         temp_c: float = 25.0,
         slope: float = 38.265306,
+        offset: float = 0.0,
         v_0: float = 0.00255,
         alpha: float = 0.02,
     ) -> float:
         """
-        Converts analog voltage to Salinity (ppt) using temperature compensation
-        and the calibrated equation:
+        Converts analog voltage to Salinity (ppt).
+        If offset is non-zero, applies linear calibration: y = slope * voltage + offset.
+        Otherwise applies temperature compensation with baseline v_0:
             live_v25 = ((live_v_raw - V_0) / (1.0 + alpha * (live_temp - 25.0))) + V_0
-            y = m * (x - V_0), where x is live_v25.
+            y = m * (x - V_0)
         """
+        if offset != 0.0:
+            return slope * voltage + offset
+
         if temp_c is None:
             temp_c = 25.0
         denom = 1.0 + alpha * (temp_c - 25.0)
@@ -34,29 +57,34 @@ class SalinitySensorService:
 
     def read_salinity(self, temp_c: float = None) -> float:
         """
-        Reads filtered voltage from ADCService Channel 1, applies temperature
-        compensation with main tank DS18B20 temperature, converts to Salinity,
-        clamps the result, and returns it. Returns None if reading fails.
+        Reads filtered voltage from ADCService Channel 1, applies calibration
+        from the database (or config), clamps the result, and returns it.
         """
         try:
-            channel = 1
             slope = 38.265306
+            offset = 0.0
             v_0 = 0.00255
             alpha = 0.02
             salinity_min = 0.0
             salinity_max = 50.0
 
             try:
-                if current_app:
-                    channel = current_app.config.get("SALINITY_ADC_CHANNEL", 1)
-                    slope = current_app.config.get("SALINITY_SLOPE", 38.265306)
-                    v_0 = current_app.config.get("SALINITY_V0", 0.00255)
-                    alpha = current_app.config.get("SALINITY_ALPHA", 0.02)
-                    salinity_min = current_app.config.get("SALINITY_MIN", 0.0)
-                    salinity_max = current_app.config.get("SALINITY_MAX", 50.0)
-            except RuntimeError:
-                # Outside Flask context
-                pass
+                from app.models import get_latest_calibration
+                cal = get_latest_calibration("salinity")
+                if cal:
+                    slope = cal["slope"]
+                    offset = cal["offset"]
+            except Exception:
+                try:
+                    if current_app:
+                        slope = current_app.config.get("SALINITY_SLOPE", 38.265306)
+                        offset = current_app.config.get("SALINITY_OFFSET", 0.0)
+                        v_0 = current_app.config.get("SALINITY_V0", 0.00255)
+                        alpha = current_app.config.get("SALINITY_ALPHA", 0.02)
+                        salinity_min = current_app.config.get("SALINITY_MIN", 0.0)
+                        salinity_max = current_app.config.get("SALINITY_MAX", 50.0)
+                except (RuntimeError, AttributeError):
+                    pass
 
             if temp_c is None:
                 try:
@@ -75,8 +103,10 @@ class SalinitySensorService:
             if temp_c is None:
                 temp_c = 25.0
 
-            voltage = self.adc_service.read_filtered_voltage(channel)
-            salinity = self._voltage_to_salinity(voltage, temp_c=temp_c, slope=slope, v_0=v_0, alpha=alpha)
+            voltage = self.read_raw_voltage()
+            salinity = self._voltage_to_salinity(
+                voltage, temp_c=temp_c, slope=slope, offset=offset, v_0=v_0, alpha=alpha
+            )
 
             salinity_clamped = max(salinity_min, min(salinity_max, salinity))
             print(f"[RPI] Salinity sensor reading - {salinity_clamped} at voltage {voltage}V (temp={temp_c}°C)")

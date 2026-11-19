@@ -93,7 +93,9 @@ document.addEventListener("DOMContentLoaded", () => {
   loadThresholds().then(loadLatestReading);
 
   const socket = io();
+  window.hatcherySocket = socket;
   socket.on("sensor_update", (reading) => {
+    window.HATCHERY_LATEST_READING = reading;
     updateLiveCards(reading);
     appendReadingToCharts(reading);
     loadThresholds();

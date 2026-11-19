@@ -14,6 +14,12 @@ from app.models import (
     create_notification,
     mark_notifications_read,
     clear_all_notifications,
+    get_all_latest_calibrations,
+    get_latest_calibration,
+    add_sensor_calibration,
+    get_calibration_history,
+    SENSOR_NORMALIZATION,
+    DEFAULT_CALIBRATIONS,
 )
 
 api_bp = Blueprint("api", __name__)
@@ -107,10 +113,7 @@ def set_valve(name):
 
     payload = request.get_json(silent=True) or {}
     is_open = bool(payload.get("open", False))
-    # CONTROL_STATE["valves"][name] = is_open
-    # return jsonify({"name": name, "open": is_open})
     
-    # isOpen = (state == 1)
     if name == "source":
         sourceValveState(is_open)
     elif name == "drain":
@@ -219,3 +222,79 @@ def delete_notifications():
         "unread_count": unread_count
     })
 
+
+# ---------------------------------------------------------------------------
+# Calibration API Endpoints
+# ---------------------------------------------------------------------------
+
+@api_bp.get("/calibrations")
+def get_calibrations():
+    """
+    Returns the most recent calibration parameters for all 5 sensors.
+    """
+    return jsonify({"calibrations": get_all_latest_calibrations()})
+
+
+@api_bp.get("/calibrations/<string:sensor>")
+def get_sensor_calibration(sensor):
+    """
+    Returns the most recent calibration and calibration history for the requested sensor.
+    """
+    try:
+        latest = get_latest_calibration(sensor)
+        history = get_calibration_history(sensor)
+        return jsonify({
+            "sensor": latest["sensor"],
+            "calibration": latest,
+            "history": history,
+        })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+
+
+@api_bp.post("/calibrations")
+@api_bp.post("/calibrations/<string:sensor>")
+def save_calibration(sensor=None):
+    """
+    Saves a new calibration equation (slope, offset, created_at) for a sensor.
+    Adds a new record to the table without overwriting prior records.
+    """
+    payload = request.get_json(silent=True) or {}
+    sensor_key = sensor or payload.get("sensor")
+    if not sensor_key:
+        return jsonify({"error": "sensor is required"}), 400
+
+    if "slope" not in payload or "offset" not in payload:
+        return jsonify({"error": "slope and offset are required"}), 400
+
+    try:
+        slope = float(payload["slope"])
+        offset = float(payload["offset"])
+        created_at = payload.get("commissionedAt") or payload.get("created_at")
+        new_cal = add_sensor_calibration(sensor_key, slope, offset, created_at=created_at)
+        return jsonify({
+            "success": True,
+            "calibration": new_cal,
+            "message": f"Successfully commissioned calibration for {new_cal['sensor']}",
+        }), 201
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@api_bp.post("/calibrations/<string:sensor>/reset")
+def reset_calibration(sensor):
+    """
+    Resets calibration parameters for the sensor back to starting default values
+    by recording a new default calibration entry.
+    """
+    norm_sensor = SENSOR_NORMALIZATION.get(sensor.lower())
+    if not norm_sensor or norm_sensor not in DEFAULT_CALIBRATIONS:
+        return jsonify({"error": f"Unknown sensor: {sensor}"}), 404
+
+    defaults = DEFAULT_CALIBRATIONS[norm_sensor]
+    cal = add_sensor_calibration(norm_sensor, defaults["slope"], defaults["offset"])
+    return jsonify({
+        "success": True,
+        "message": f"Reset {norm_sensor} to starting default calibration",
+        "calibration": cal,
+    }), 200
