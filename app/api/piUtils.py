@@ -45,9 +45,11 @@ VALVE_STEP_AMOUNT = 182
 VALVE_STEPS = 182
 VALVE_STEP_DELAY = 0.001
 
-# Legacy valve pin aliases (water solenoid valves replaced with steppers; main valve removed)
+# Water source valve pin
+sourceValvePin = 8
+
+# Legacy valve pin aliases (main valve removed, heating/cooling use steppers)
 mainValvePin = None
-sourceValvePin = None
 coolingValvePin = None
 heatingValvePin = None
 
@@ -352,6 +354,8 @@ def setRpiSourceValveState(isValveOpen: bool):
     global sourceValveOpen
     sourceValveOpen = isValveOpen
     print(f"[RPI] source valve -> {sourceValveOpen}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(sourceValvePin, GPIO.LOW if sourceValveOpen else GPIO.HIGH)
 
 setSourceValve = setRpiSourceValveState
 
@@ -766,6 +770,9 @@ doBleedValve = setDummyDoBleedValve
 if isRpiPresent:
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
+
+    # Source water valve (Active-LOW: LOW=open, HIGH=closed)
+    GPIO.setup(sourceValvePin, GPIO.OUT, initial=GPIO.HIGH)
 
     # 8 Peltier cooling modules (Active-LOW: LOW=ON, HIGH=OFF)
     for pin in PELTIER_PINS:
@@ -1336,6 +1343,11 @@ def cleanupGpio():
     setAeratorFan(False)
 
     if isRpiPresent and GPIO is not None:
+        try:
+            print("[RPI] Closing source valve...")
+            GPIO.output(sourceValvePin, GPIO.HIGH)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting source valve: {e}")
         try:
             print("[RPI] Disabling heating and cooling valve stepper drivers...")
             GPIO.output(heatValveEnablePin, MOTOR_DISABLE)

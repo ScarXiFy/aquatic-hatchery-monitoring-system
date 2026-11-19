@@ -57,9 +57,28 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
         self.assertIsNone(piUtils.aeratorFanPin)
         self.assertEqual(piUtils.mixerPin, 5)
 
-        # Water solenoid valves on GPIO removed, mixing-to-main valve removed entirely
+        # Water source valve pin maintained on GPIO 8, mixing-to-main valve removed entirely
         self.assertIsNone(piUtils.mainValvePin)
-        self.assertIsNone(piUtils.sourceValvePin)
+        self.assertEqual(piUtils.sourceValvePin, 8)
+
+    def test_rpi_source_valve_gpio_control(self):
+        """Verify source valve opens (LOW) and closes (HIGH) on GPIO 8."""
+        mock_gpio = MagicMock()
+        mock_gpio.HIGH = 1
+        mock_gpio.LOW = 0
+
+        with patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "GPIO", mock_gpio):
+
+            # Open source valve
+            piUtils.setRpiSourceValveState(True)
+            self.assertTrue(piUtils.sourceValveOpen)
+            mock_gpio.output.assert_called_with(8, 0)
+
+            # Close source valve
+            piUtils.setRpiSourceValveState(False)
+            self.assertFalse(piUtils.sourceValveOpen)
+            mock_gpio.output.assert_called_with(8, 1)
 
     def test_cooling_peltiers_simultaneous_enable(self):
         """Verify all 8 peltier modules enable simultaneously when cooling is needed."""
@@ -187,6 +206,9 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
              patch.object(piUtils, "GPIO", mock_gpio):
 
             piUtils.cleanupGpio()
+
+            # Source valve closed (set HIGH)
+            mock_gpio.output.assert_any_call(8, 1)
 
             # Stepper driver enables set HIGH (disabled)
             mock_gpio.output.assert_any_call(6, 1)   # heating valve driver disabled
