@@ -208,6 +208,48 @@
     </div>
   </div>
 
+  <!-- Commission Confirmation Modal Overlay -->
+  <div id="commission-confirm-modal-overlay" class="commission-confirm-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="confirm-commission-title">
+    <div class="commission-confirm-card">
+      <div class="commission-confirm-header">
+        <div class="confirm-icon-wrap" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        </div>
+        <div class="confirm-header-text">
+          <h3 id="confirm-commission-title">Confirm Commission</h3>
+          <p class="confirm-sensor-subtitle" id="confirm-sensor-name">pH Sensor</p>
+        </div>
+        <button type="button" id="confirm-commission-close-btn" class="confirm-close-btn" aria-label="Close confirmation dialog" title="Close">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+      <div class="commission-confirm-body">
+        <p class="confirm-prompt-text">
+          Are you sure you want to commission this equation? You cannot revert to the previous calibration equation.
+        </p>
+        <div class="confirm-equation-card">
+          <span class="confirm-equation-label">New Equation to Commission:</span>
+          <code class="confirm-equation-code" id="confirm-equation-text">pH = (-6.4140) · V + (17.2917)</code>
+        </div>
+      </div>
+      <div class="commission-confirm-footer">
+        <button type="button" id="confirm-commission-cancel-btn" class="btn-confirm-cancel">Cancel</button>
+        <button type="button" id="confirm-commission-proceed-btn" class="btn-confirm-proceed">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 6L9 17l-5-5" />
+          </svg>
+          <span>Yes, Commission</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Warning Alert Modal Overlay -->
   <div id="alert-modal-overlay" class="alert-modal-overlay" hidden aria-modal="true" role="dialog">
     <div class="alert-modal-card">

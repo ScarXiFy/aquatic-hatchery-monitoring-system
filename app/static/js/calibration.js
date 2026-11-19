@@ -29,7 +29,7 @@
       defaultSlope: -6.41401,
       defaultOffset: 17.29167,
       refPlaceholder: "e.g. 7.00",
-      actualPlaceholder: "Read voltage",
+      actualPlaceholder: "e.g. 1.605",
       standardPoints: [
         { ref: 4.01, actual: "" },
         { ref: 7.00, actual: "" },
@@ -52,7 +52,7 @@
       defaultSlope: 5.93086,
       defaultOffset: 0.3273368,
       refPlaceholder: "e.g. 8.20",
-      actualPlaceholder: "Read voltage",
+      actualPlaceholder: "e.g. 1.162",
       standardPoints: [
         { ref: 0.00, actual: "" },
         { ref: 8.20, actual: "" },
@@ -74,7 +74,7 @@
       defaultSlope: 38.265306,
       defaultOffset: 0.0,
       refPlaceholder: "e.g. 35.0",
-      actualPlaceholder: "Read voltage",
+      actualPlaceholder: "e.g. 0.852",
       standardPoints: [
         { ref: 0.0, actual: "" },
         { ref: 35.0, actual: "" },
@@ -96,7 +96,7 @@
       defaultSlope: 1.0,
       defaultOffset: 0.0,
       refPlaceholder: "e.g. 25.0",
-      actualPlaceholder: "Read temp",
+      actualPlaceholder: "e.g. 26.2",
       standardPoints: [
         { ref: 25.0, actual: "" },
         { ref: 30.0, actual: "" },
@@ -124,7 +124,7 @@
       defaultSlope: 1.0,
       defaultOffset: 0.0,
       refPlaceholder: "e.g. 25.0",
-      actualPlaceholder: "Read temp",
+      actualPlaceholder: "e.g. 26.0",
       standardPoints: [
         { ref: 25.0, actual: "" },
         { ref: 30.0, actual: "" },
@@ -236,7 +236,13 @@
     feedbackAlert,
     feedbackText,
     colRefTitle,
-    colSensorTitle;
+    colSensorTitle,
+    confirmOverlay,
+    confirmCloseBtn,
+    confirmCancelBtn,
+    confirmProceedBtn,
+    confirmSensorName,
+    confirmEquationText;
 
   function initDOM() {
     modalOverlay = document.getElementById("calibration-modal-overlay");
@@ -267,6 +273,13 @@
     colRefTitle = document.getElementById("col-ref-title");
     colSensorTitle = document.getElementById("col-sensor-title");
 
+    confirmOverlay = document.getElementById("commission-confirm-modal-overlay");
+    confirmCloseBtn = document.getElementById("confirm-commission-close-btn");
+    confirmCancelBtn = document.getElementById("confirm-commission-cancel-btn");
+    confirmProceedBtn = document.getElementById("confirm-commission-proceed-btn");
+    confirmSensorName = document.getElementById("confirm-sensor-name");
+    confirmEquationText = document.getElementById("confirm-equation-text");
+
     if (!modalOverlay || !openBtn) return false;
 
     // Attach Event Listeners
@@ -278,9 +291,24 @@
       if (e.target === modalOverlay) closeModal();
     });
 
+    if (confirmCloseBtn) confirmCloseBtn.addEventListener("click", closeConfirmCommissionModal);
+    if (confirmCancelBtn) confirmCancelBtn.addEventListener("click", closeConfirmCommissionModal);
+    if (confirmProceedBtn) confirmProceedBtn.addEventListener("click", onConfirmCommissionProceed);
+    if (confirmOverlay) {
+      confirmOverlay.addEventListener("click", (e) => {
+        if (e.target === confirmOverlay) closeConfirmCommissionModal();
+      });
+    }
+
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && !modalOverlay.hidden) {
-        closeModal();
+      if (e.key === "Escape") {
+        if (confirmOverlay && !confirmOverlay.hidden) {
+          closeConfirmCommissionModal();
+          return;
+        }
+        if (!modalOverlay.hidden) {
+          closeModal();
+        }
       }
     });
 
@@ -302,7 +330,7 @@
     }
 
     if (commissionBtn) {
-      commissionBtn.addEventListener("click", executeCommission);
+      commissionBtn.addEventListener("click", requestCommission);
     }
 
     return true;
@@ -318,6 +346,7 @@
   }
 
   function closeModal() {
+    closeConfirmCommissionModal();
     modalOverlay.hidden = true;
     document.body.classList.remove("modal-open");
     if (feedbackAlert) feedbackAlert.hidden = true;
@@ -325,6 +354,7 @@
   }
 
   function selectSensor(sensorKey) {
+    closeConfirmCommissionModal();
     currentSensorKey = sensorKey;
     pendingCalculation = null;
     const config = SENSOR_CONFIGS[sensorKey];
@@ -409,7 +439,7 @@
       </div>
       <div class="col-sensor">
         <div class="input-with-unit">
-          <input type="text" class="point-input actual-input" placeholder="-- ${config.inputUnit}" value="${actualVal !== undefined && actualVal !== null && actualVal !== "" ? actualVal : ""}" disabled aria-label="Actual sensor reading for point ${index}">
+          <input type="number" step="any" class="point-input actual-input" placeholder="${config.actualPlaceholder || 'e.g. ' + config.defaultLive}" value="${actualVal !== undefined && actualVal !== null && actualVal !== "" ? actualVal : ""}" aria-label="Actual sensor reading for point ${index}">
           <span class="input-unit-suffix">${config.inputUnit}</span>
         </div>
       </div>
@@ -434,6 +464,16 @@
       if (refInput.value.trim() !== "") {
         refInput.classList.remove("input-error");
         if (actualInput.value.trim() !== "") {
+          row.classList.remove("row-incomplete");
+        }
+      }
+      invalidatePendingCalibration();
+    });
+
+    actualInput.addEventListener("input", () => {
+      if (actualInput.value.trim() !== "") {
+        actualInput.classList.remove("input-error");
+        if (refInput.value.trim() !== "") {
           row.classList.remove("row-incomplete");
         }
       }
@@ -522,7 +562,7 @@
     if (hasIncomplete) {
       return {
         valid: false,
-        error: `Incomplete calibration data (${incompletePointNames.join(", ")}): All datapoints must be filled with both a reference reading and a captured sensor reading before calibrating.`,
+        error: `Incomplete calibration data (${incompletePointNames.join(", ")}): All datapoints must be filled with both a reference reading and a sensor reading before calibrating.`,
         points: [],
       };
     }
@@ -661,6 +701,39 @@
 
     enableCommissionBtn();
     showFeedback("Calibration was successful.", "success");
+  }
+
+  /**
+   * COMMISSION CONFIRMATION:
+   * Prompts the user with a confirmation pop up before committing and pushing to backend.
+   */
+  function requestCommission() {
+    if (!pendingCalculation || pendingCalculation.sensorKey !== currentSensorKey) {
+      showFeedback("Please press 'Calibrate' to generate the equation before commissioning.", "warning");
+      return;
+    }
+
+    const config = SENSOR_CONFIGS[currentSensorKey];
+    if (confirmSensorName) {
+      confirmSensorName.textContent = config.name;
+    }
+    if (confirmEquationText) {
+      confirmEquationText.textContent = config.formatEquation(pendingCalculation.slope, pendingCalculation.offset);
+    }
+    if (confirmOverlay) {
+      confirmOverlay.hidden = false;
+    }
+  }
+
+  function closeConfirmCommissionModal() {
+    if (confirmOverlay) {
+      confirmOverlay.hidden = true;
+    }
+  }
+
+  function onConfirmCommissionProceed() {
+    closeConfirmCommissionModal();
+    executeCommission();
   }
 
   /**
