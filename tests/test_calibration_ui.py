@@ -58,6 +58,21 @@ class TestCalibrationUI(unittest.TestCase):
         # Proceed button in confirmation dialog calls onConfirmCommissionProceed
         self.assertIn('confirmProceedBtn.addEventListener("click", onConfirmCommissionProceed)', self.calibration_js)
 
+    def test_sensor_select_uses_five_buttons_in_a_row(self):
+        """Verify 5 buttons in a row for sensor selection replace/augment dropdown."""
+        self.assertIn('class="calibration-sensor-buttons-row"', self.base_html)
+        self.assertIn('data-sensor="ph"', self.base_html)
+        self.assertIn('data-sensor="do"', self.base_html)
+        self.assertIn('data-sensor="salinity"', self.base_html)
+        self.assertIn('data-sensor="temp"', self.base_html)
+        self.assertIn('data-sensor="mixing_temp"', self.base_html)
+
+        self.assertIn(".calibration-sensor-buttons-row", self.dashboard_css)
+        self.assertIn(".btn-sensor-select", self.dashboard_css)
+
+        self.assertIn(".btn-sensor-select", self.calibration_js)
+        self.assertIn('btn.addEventListener("click"', self.calibration_js)
+
 
 if __name__ == "__main__":
     unittest.main()

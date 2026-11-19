@@ -969,3 +969,11 @@ def init_motor_state():
     pos = load_motor_state("bleed_valve")
     if pos is None:
         save_motor_state("bleed_valve", 0)
+
+    heat_pos = load_motor_state("heating_valve")
+    if heat_pos is None:
+        save_motor_state("heating_valve", 0)  # closed for heating
+
+    cool_pos = load_motor_state("cooling_valve")
+    if cool_pos is None:
+        save_motor_state("cooling_valve", 1)  # open for cooling

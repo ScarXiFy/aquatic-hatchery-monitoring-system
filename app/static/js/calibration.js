@@ -318,6 +318,15 @@
       });
     }
 
+    const sensorButtons = document.querySelectorAll(".btn-sensor-select");
+    sensorButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (btn.dataset.sensor) {
+          selectSensor(btn.dataset.sensor);
+        }
+      });
+    });
+
     if (addPointBtn) {
       addPointBtn.addEventListener("click", () => {
         addPointRow();
@@ -363,6 +372,16 @@
     if (sensorSelect && sensorSelect.value !== sensorKey) {
       sensorSelect.value = sensorKey;
     }
+
+    document.querySelectorAll(".btn-sensor-select").forEach((btn) => {
+      if (btn.dataset.sensor === sensorKey) {
+        btn.classList.add("active");
+        btn.setAttribute("aria-selected", "true");
+      } else {
+        btn.classList.remove("active");
+        btn.setAttribute("aria-selected", "false");
+      }
+    });
 
     if (actualLabel) {
       actualLabel.textContent = config.actualLabel;

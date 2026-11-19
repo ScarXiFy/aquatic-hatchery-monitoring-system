@@ -27,6 +27,8 @@
 
   const STORAGE_KEY_SETPOINT_TRACKERS = "hatchery:setpoint-trackers";
   const STORAGE_KEY_THRESHOLDS = "hatchery:thresholds";
+  const ALLOWED_ADJUSTING_TIME_MS = 15 * 60 * 1000; // 15 mins allowed adjusting time for DO and temperature
+  const MAX_TRANSITION_MS = ALLOWED_ADJUSTING_TIME_MS;
 
   function getStoredItem(key) {
     try {
@@ -104,13 +106,12 @@
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === "object") {
         const now = Date.now();
-        const MAX_TRANSITION_MS = 15 * 60 * 1000;
         ["temperature", "dissolved_oxygen"].forEach((metric) => {
           if (parsed[metric] && typeof parsed[metric] === "object") {
             const saved = parsed[metric];
             const tracker = setpointTrackers[metric];
             tracker.targetSetpoint = saved.targetSetpoint !== undefined ? Number(saved.targetSetpoint) : tracker.targetSetpoint;
-            const isTimedOut = saved.startTime && (now - Number(saved.startTime) > MAX_TRANSITION_MS);
+            const isTimedOut = saved.startTime && (now - Number(saved.startTime) > ALLOWED_ADJUSTING_TIME_MS);
             tracker.active = Boolean(saved.active) && !isTimedOut;
             tracker.initialValue = saved.initialValue !== null && saved.initialValue !== undefined ? Number(saved.initialValue) : null;
             tracker.startTime = saved.startTime ? Number(saved.startTime) : null;
@@ -224,17 +225,17 @@
       saveSetpointTrackers();
     }
 
+    // Maximum transition duration / allowed adjusting time (15 minutes): if not reached after 15m, trigger alarm
+    if (now - tracker.startTime > ALLOWED_ADJUSTING_TIME_MS) {
+      tracker.active = false;
+      saveSetpointTrackers();
+      return false;
+    }
+
     // 2. Initial grace / observation window:
     // Do not trigger alarm right away; give actuators and water bulk time to respond (first 4 readings or 15s)
     if (tracker.readings.length <= 4 || (now - tracker.startTime < 15000)) {
       return true;
-    }
-
-    // Maximum transition duration (15 minutes): if not reached after 15m, trigger alarm
-    if (now - tracker.startTime > 15 * 60 * 1000) {
-      tracker.active = false;
-      saveSetpointTrackers();
-      return false;
     }
 
     // 3. Compute rate of change over recent window (last 4-5 readings)
@@ -1530,6 +1531,67 @@
     socket.on("disconnect", () => updateSocketStatus(false));
     socket.on("connect_error", () => updateSocketStatus(false));
     updateSocketStatus(Boolean(socket.connected));
+
+    socket.on("controls_updated", (data) => {
+      if (!data) return;
+      if (data.sliders) {
+        Object.entries(data.sliders).forEach(([key, value]) => {
+          controlState[key] = Number(value);
+        });
+        updateSliders(data.sliders);
+        if (data.sliders.temperature_setpoint !== undefined) {
+          const tItem = thresholds.find((t) => t.metric === "temperature");
+          if (tItem) {
+            tItem.min_value = Number(data.sliders.temperature_setpoint);
+            tItem.max_value = Number(data.sliders.temperature_setpoint);
+          }
+        }
+        if (data.sliders.dissolved_oxygen_setpoint !== undefined) {
+          const doItem = thresholds.find((t) => t.metric === "dissolved_oxygen");
+          if (doItem) {
+            doItem.min_value = Number(data.sliders.dissolved_oxygen_setpoint);
+            doItem.max_value = Number(data.sliders.dissolved_oxygen_setpoint);
+          }
+        }
+        window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+        if (latestReading) {
+          checkAlertTriggers(latestReading);
+          updateGauges(latestReading);
+        }
+      }
+      if (data.valves) {
+        document.querySelectorAll("[data-valve]").forEach((button) => {
+          const v = button.dataset.valve;
+          if (v in data.valves) {
+            const isOpen = Boolean(data.valves[v]);
+            button.setAttribute("aria-pressed", String(isOpen));
+            button.innerHTML = `<i></i> ${isOpen ? "Open" : "Closed"}`;
+          }
+        });
+      }
+    });
+
+    socket.on("thresholds_updated", (data) => {
+      if (!data || !data.thresholds) return;
+      thresholds = data.thresholds;
+      setStoredItem(STORAGE_KEY_THRESHOLDS, JSON.stringify(thresholds));
+      thresholds.forEach((item) => {
+        if (item.metric === "temperature" && item.min_value !== undefined) {
+          controlState.temperature_setpoint = Number(item.min_value);
+        } else if (item.metric === "dissolved_oxygen" && item.min_value !== undefined) {
+          controlState.dissolved_oxygen_setpoint = Number(item.min_value);
+        }
+      });
+      if (!isEditingThresholds()) {
+        renderThresholds();
+      }
+      if (latestReading) {
+        checkAlertTriggers(latestReading);
+        updateGauges(latestReading);
+      }
+      window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
+    });
+
     socket.on("sensor_update", (reading) => {
       updateGauges(reading);
       
@@ -1739,6 +1801,7 @@
   });
   if (typeof window !== "undefined") {
     window.HatcheryRateOfChange = {
+      ALLOWED_ADJUSTING_TIME_MS,
       setpointTrackers,
       recordSetpointChange,
       isRateOfChangeAdjusting,

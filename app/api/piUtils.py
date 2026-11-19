@@ -105,9 +105,9 @@ drainValveOpen = False
 mainValveOpen = False
 
 coolingSystemActive = False
-coolingValveOpen = False
+coolingValveOpen = True   # Initial stored value: OPEN for cooling
 heatingSystemActive = False
-heatingValveOpen = False
+heatingValveOpen = False  # Initial stored value: CLOSED for heating
 heaterActive = False
 mixerActive = False
 mixingFanActive = False
@@ -401,6 +401,11 @@ def setRpiCoolingValve(isOpen: bool):
     if isRpiPresent and GPIO is not None:
         _step_valve_motor(coolValveEnablePin, coolValveDirPin, coolValvePulPin, direction, VALVE_STEP_AMOUNT)
     coolingValveOpen = isOpen
+    try:
+        from app.models import save_motor_state
+        save_motor_state("cooling_valve", 1 if isOpen else 0)
+    except Exception:
+        pass
 
 setCoolingValve = setRpiCoolingValve
 
@@ -414,6 +419,11 @@ def setRpiHeatingValve(isOpen: bool):
     if isRpiPresent and GPIO is not None:
         _step_valve_motor(heatValveEnablePin, heatValveDirPin, heatValvePulPin, direction, VALVE_STEP_AMOUNT)
     heatingValveOpen = isOpen
+    try:
+        from app.models import save_motor_state
+        save_motor_state("heating_valve", 1 if isOpen else 0)
+    except Exception:
+        pass
 
 setHeatingValve = setRpiHeatingValve
 
@@ -444,6 +454,11 @@ def setDummyCoolingValve(isOpen: bool):
     if isOpen == coolingValveOpen:
         return
     coolingValveOpen = isOpen
+    try:
+        from app.models import save_motor_state
+        save_motor_state("cooling_valve", 1 if isOpen else 0)
+    except Exception:
+        pass
     direction_str = "CCW" if isOpen else "CW"
     action_str = "OPEN" if isOpen else "CLOSED"
     print(f"[DUMMY] cooling valve stepper -> {action_str} ({direction_str}, {VALVE_STEP_AMOUNT} steps)")
@@ -472,6 +487,11 @@ def setDummyHeatingValve(isOpen: bool):
     if isOpen == heatingValveOpen:
         return
     heatingValveOpen = isOpen
+    try:
+        from app.models import save_motor_state
+        save_motor_state("heating_valve", 1 if isOpen else 0)
+    except Exception:
+        pass
     direction_str = "CCW" if isOpen else "CW"
     action_str = "OPEN" if isOpen else "CLOSED"
     print(f"[DUMMY] heating valve stepper -> {action_str} ({direction_str}, {VALVE_STEP_AMOUNT} steps)")
@@ -633,6 +653,53 @@ def initializeLed(app=None):
             print(f"{prefix} LED restored to {target_lux} lux")
         except Exception as e:
             logging.warning(f"Failed to initialize LED setting from DB: {e}")
+
+    if app is not None:
+        with app.app_context():
+            _do_init()
+    else:
+        try:
+            from flask import current_app
+            if current_app:
+                _do_init()
+            else:
+                _do_init()
+        except Exception:
+            _do_init()
+
+
+def initializeValveMotorStates(app=None):
+    """
+    Initializes and restores motor opening status for heating and cooling valves from DB.
+    Initial defaults stored:
+      - Heating valve: Closed (0)
+      - Cooling valve: Open (1)
+    Ensures that even though the valve is initially set to a certain position, it is not
+    assumed to be the opposite position. Movement is skipped if state already matches.
+    """
+    global coolingValveOpen, heatingValveOpen
+
+    def _do_init():
+        global coolingValveOpen, heatingValveOpen
+        try:
+            from app.models import load_motor_state, init_motor_state
+            init_motor_state()
+            saved_cool = load_motor_state("cooling_valve")
+            if saved_cool is not None:
+                coolingValveOpen = bool(saved_cool == 1)
+            else:
+                coolingValveOpen = True
+
+            saved_heat = load_motor_state("heating_valve")
+            if saved_heat is not None:
+                heatingValveOpen = bool(saved_heat == 1)
+            else:
+                heatingValveOpen = False
+
+            prefix = "[RPI]" if isRpiPresent else "[DUMMY]"
+            print(f"{prefix} Valve motor opening status initialized: cooling={'OPEN' if coolingValveOpen else 'CLOSED'}, heating={'OPEN' if heatingValveOpen else 'CLOSED'}")
+        except Exception as e:
+            logging.warning(f"Could not restore valve motor states: {e}")
 
     if app is not None:
         with app.app_context():

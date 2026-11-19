@@ -94,6 +94,29 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const socket = io();
   window.hatcherySocket = socket;
+  socket.on("thresholds_updated", (data) => {
+    if (data && data.thresholds) {
+      thresholds = data.thresholds;
+      const tbody = document.getElementById("threshold-table-body");
+      if (tbody) {
+        tbody.innerHTML = thresholds
+          .filter((item) => item.metric === "ph" || item.metric === "salinity")
+          .map((item) => {
+            const metricConfig = HATCHERY_METRICS[item.metric];
+            return `
+              <tr>
+                <td>${metricConfig?.label || item.metric}</td>
+                <td><input value="${item.min_value}" aria-label="${metricConfig?.label || item.metric} minimum threshold" readonly></td>
+                <td><input value="${item.max_value}" aria-label="${metricConfig?.label || item.metric} maximum threshold" readonly></td>
+                <td>${metricConfig?.unit || ""}</td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+    }
+  });
+
   socket.on("sensor_update", (reading) => {
     window.HATCHERY_LATEST_READING = reading;
     updateLiveCards(reading);

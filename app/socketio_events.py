@@ -3,7 +3,7 @@ import time
 from flask import current_app, request
 
 from app.sensors.simulator import start_sensor_simulator
-from app.api.piUtils import initializeBleedValveMotor, initializeLed, mainValve
+from app.api.piUtils import initializeBleedValveMotor, initializeValveMotorStates, initializeLed, mainValve
 
 SERVER_BOOT_TIME = time.time()
 _simulator_started = False
@@ -44,6 +44,20 @@ def register_socketio_events(socketio):
         connected_clients.add(sid)
         notify_client_connected()
         socketio.emit("server_ready", {"boot_id": SERVER_BOOT_TIME}, to=sid)
+        try:
+            from app.models import get_control_settings, get_thresholds
+            from app.api.routes import CONTROL_STATE
+            sliders = get_control_settings()
+            thresholds_data = get_thresholds()
+            socketio.emit("controls_updated", {
+                "sliders": sliders,
+                "valves": CONTROL_STATE.get("valves", {})
+            }, to=sid)
+            socketio.emit("thresholds_updated", {
+                "thresholds": thresholds_data
+            }, to=sid)
+        except Exception:
+            pass
         start_background_simulator(socketio)
 
     @socketio.on("disconnect")
@@ -62,6 +76,7 @@ def start_background_simulator(socketio):
     _simulator_started = True
     app = current_app._get_current_object()
     initializeBleedValveMotor(app)
+    initializeValveMotorStates(app)
     initializeLed(app)
     mainValve(True)
     socketio.start_background_task(

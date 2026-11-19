@@ -1835,6 +1835,61 @@ input:focus-visible {
   position: relative;
 }
 
+.calibration-sensor-buttons-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.btn-sensor-select {
+  flex: 1 1 0;
+  min-height: 40px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(203, 213, 225, 0.9);
+  background-color: #f8fafc;
+  color: #334155;
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 160ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn-sensor-select:hover {
+  border-color: #0d9488;
+  background-color: #f0fdfa;
+  color: #0f766e;
+}
+
+.btn-sensor-select.active {
+  border-color: #0d9488;
+  background: #0d9488;
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(13, 148, 136, 0.28);
+  font-weight: 700;
+}
+
+.btn-sensor-select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.25);
+}
+
+@media (max-width: 640px) {
+  .calibration-sensor-buttons-row {
+    flex-wrap: wrap;
+  }
+  .btn-sensor-select {
+    flex: 1 1 calc(50% - 8px);
+    font-size: 12.5px;
+  }
+}
+
 .calibration-select {
   width: 100%;
   height: 38px;

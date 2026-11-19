@@ -103,7 +103,15 @@ def save_thresholds():
     if not updates:
         return jsonify({"error": "no threshold updates provided"}), 400
 
-    return jsonify({"thresholds": update_thresholds(updates)})
+    res = update_thresholds(updates)
+    try:
+        from app import socketio
+        if socketio:
+            socketio.emit("thresholds_updated", {"thresholds": res})
+    except Exception:
+        pass
+
+    return jsonify({"thresholds": res})
 
 
 @api_bp.post("/controls/valves/<string:name>")
@@ -123,6 +131,15 @@ def set_valve(name):
     else:
         return ("Unknown valve", 400)
     CONTROL_STATE["valves"][name] = is_open
+    try:
+        from app import socketio
+        if socketio:
+            socketio.emit("controls_updated", {
+                "valves": CONTROL_STATE["valves"],
+                "sliders": CONTROL_STATE["sliders"]
+            })
+    except Exception:
+        pass
     return ("", 204)
 
 
@@ -165,6 +182,16 @@ def set_sliders():
         
     for key, val in db_sliders.items():
         CONTROL_STATE["sliders"][key] = val
+
+    try:
+        from app import socketio
+        if socketio:
+            socketio.emit("controls_updated", {
+                "sliders": db_sliders,
+                "valves": CONTROL_STATE["valves"]
+            })
+    except Exception:
+        pass
         
     return jsonify({"sliders": db_sliders})
 
@@ -182,6 +209,17 @@ def set_led():
     piUtils.set_lux(target_lux)
     update_control_settings({"led_intensity": target_lux})
     CONTROL_STATE["sliders"]["led_intensity"] = target_lux
+
+    try:
+        from app import socketio
+        if socketio:
+            socketio.emit("controls_updated", {
+                "sliders": CONTROL_STATE["sliders"],
+                "valves": CONTROL_STATE["valves"]
+            })
+    except Exception:
+        pass
+
     return jsonify({"led_intensity": target_lux, "lux": target_lux}), 200
 
 

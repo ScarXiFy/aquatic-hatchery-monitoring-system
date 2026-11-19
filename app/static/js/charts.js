@@ -266,20 +266,6 @@
       dates.push({ key, dateObj: d });
     }
 
-    // Pre-seed lastKnownValues from the earliest day with readings if first days are empty
-    const lastKnownValues = {};
-    Object.keys(metrics).forEach((m) => {
-      lastKnownValues[m] = null;
-      for (const { key } of dates) {
-        const bucket = dayBuckets.get(key);
-        if (bucket && bucket.values[m] && bucket.values[m].length > 0) {
-          const avg = average(bucket.values[m]);
-          lastKnownValues[m] = avg === null ? null : Number(avg.toFixed(metrics[m].decimals + 1));
-          break;
-        }
-      }
-    });
-
     const points = [];
     dates.forEach(({ key, dateObj }) => {
       const bucket = dayBuckets.get(key);
@@ -294,9 +280,9 @@
           const avg = average(bucket.values[m]);
           const roundedAvg = avg === null ? null : Number(avg.toFixed(metrics[m].decimals + 1));
           point[m] = roundedAvg;
-          lastKnownValues[m] = roundedAvg;
         } else {
-          point[m] = lastKnownValues[m];
+          // If there was no reading on that day, show no value (null) for that day
+          point[m] = null;
         }
       });
 
@@ -311,7 +297,10 @@
   }
 
   function statsFor(metric, points) {
-    const values = points.map((p) => Number(p[metric])).filter((v) => !Number.isNaN(v));
+    const values = points
+      .map((p) => p[metric])
+      .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
+      .map((v) => Number(v));
     if (!values.length) return { current: null, min: null, max: null };
     return {
       current: values[values.length - 1],
@@ -363,8 +352,9 @@
     const len = points.length;
     Object.keys(metrics).forEach((metric) => {
       const config = metrics[metric];
-      const current = len > 0 ? Number(points[len - 1][metric]) : null;
-      const prev = len > 1 ? Number(points[len - 2][metric]) : null;
+      const validPoints = points.map(p => p[metric]).filter(v => v !== null && v !== undefined && !Number.isNaN(Number(v)));
+      const current = validPoints.length > 0 ? Number(validPoints[validPoints.length - 1]) : null;
+      const prev = validPoints.length > 1 ? Number(validPoints[validPoints.length - 2]) : null;
       let condition = conditionFor(metric, current);
       if (window.HatcheryRateOfChange && typeof window.HatcheryRateOfChange.isRateOfChangeAdjusting === "function") {
         if ((metric === "temperature" || metric === "dissolved_oxygen") && window.HatcheryRateOfChange.isRateOfChangeAdjusting(metric, current)) {
@@ -408,9 +398,9 @@
   }
 
   function updateChartStatusBadges(points) {
-    const len = points.length;
     Object.keys(metrics).forEach((metric) => {
-      const current = len > 0 ? Number(points[len - 1][metric]) : null;
+      const validPoints = points.map(p => p[metric]).filter(v => v !== null && v !== undefined && !Number.isNaN(Number(v)));
+      const current = validPoints.length > 0 ? Number(validPoints[validPoints.length - 1]) : null;
       let condition = conditionFor(metric, current);
       if (window.HatcheryRateOfChange && typeof window.HatcheryRateOfChange.isRateOfChangeAdjusting === "function") {
         if ((metric === "temperature" || metric === "dissolved_oxygen") && window.HatcheryRateOfChange.isRateOfChangeAdjusting(metric, current)) {
@@ -443,15 +433,19 @@
             borderWidth: 2.5,
             pointRadius: (context) => {
               if (context.datasetIndex !== 0) return 0;
+              const val = context.raw;
+              if (val === null || val === undefined) return 0;
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
                 return 6;
               }
-              return 0;
+              return currentRange === "week" ? 4 : 0;
             },
             pointHoverRadius: (context) => {
               if (context.datasetIndex !== 0) return 0;
+              const val = context.raw;
+              if (val === null || val === undefined) return 0;
               const index = context.dataIndex;
               const count = context.dataset.data.length;
               if (count > 0 && index === count - 1) {
@@ -557,6 +551,9 @@
               label: (context) => {
                 if (context.datasetIndex !== 0) return null;
                 const value = context.parsed.y;
+                if (value === null || value === undefined || Number.isNaN(value)) {
+                  return null;
+                }
                 const condition = conditionFor(metric, value);
                 const statusText = conditionLabel(condition);
                 return [
@@ -871,4 +868,12 @@
     bindRangeButtons();
     setInterval(updateElapsedTimes, 1000);
   });
+
+  if (typeof window !== "undefined") {
+    window.HatcheryCharts = {
+      buildWeekPoints,
+      buildDayPoints,
+      summarizeHistory,
+    };
+  }
 })();

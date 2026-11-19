@@ -94,18 +94,24 @@
           <span class="feedback-text" id="calibration-feedback-text">Calibration was successful.</span>
         </div>
 
-        <!-- Sensor Selection Dropdown -->
+        <!-- Sensor Selection Buttons (5 in a row) -->
         <div class="calibration-section sensor-select-section">
-          <label for="calibration-sensor-select" class="calibration-label">Select Sensor to Calibrate</label>
-          <div class="select-wrapper">
-            <select id="calibration-sensor-select" class="calibration-select" aria-label="Select sensor to calibrate">
-              <option value="ph">pH Sensor</option>
-              <option value="do">Dissolved Oxygen Sensor</option>
-              <option value="salinity">Salinity / EC Sensor</option>
-              <option value="temp">Water Temperature Sensor - Main Tank</option>
-              <option value="mixing_temp">Mixing Tank Temperature Sensor</option>
-            </select>
+          <label class="calibration-label">Select Sensor to Calibrate</label>
+          <div class="calibration-sensor-buttons-row" role="tablist" aria-label="Select sensor to calibrate">
+            <button type="button" class="btn-sensor-select active" data-sensor="ph" aria-label="pH Sensor" title="Calibrate pH Sensor">pH Sensor</button>
+            <button type="button" class="btn-sensor-select" data-sensor="do" aria-label="Dissolved Oxygen Sensor" title="Calibrate Dissolved Oxygen Sensor">DO Sensor</button>
+            <button type="button" class="btn-sensor-select" data-sensor="salinity" aria-label="Salinity / EC Sensor" title="Calibrate Salinity / EC Sensor">Salinity Sensor</button>
+            <button type="button" class="btn-sensor-select" data-sensor="temp" aria-label="Water Temperature Sensor - Main Tank" title="Calibrate Water Temperature (Main Tank)">Main Temp</button>
+            <button type="button" class="btn-sensor-select" data-sensor="mixing_temp" aria-label="Mixing Tank Temperature Sensor" title="Calibrate Mixing Tank Temperature">Mixing Temp</button>
           </div>
+          <!-- Hidden select maintained for programmatic sync and fallback -->
+          <select id="calibration-sensor-select" class="calibration-select" style="display: none;" aria-hidden="true" tabindex="-1">
+            <option value="ph">pH Sensor</option>
+            <option value="do">Dissolved Oxygen Sensor</option>
+            <option value="salinity">Salinity / EC Sensor</option>
+            <option value="temp">Water Temperature Sensor - Main Tank</option>
+            <option value="mixing_temp">Mixing Tank Temperature Sensor</option>
+          </select>
         </div>
 
         <!-- Live Sensor Signal Display -->
