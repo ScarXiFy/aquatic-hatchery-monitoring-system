@@ -1,3 +1,4 @@
+import csv
 import unittest
 from unittest.mock import MagicMock, patch
 import sys
@@ -221,6 +222,148 @@ class TestCoolingSystemScript(unittest.TestCase):
                 rows = cursor.execute("SELECT * FROM cooling_test_readings").fetchall()
                 self.assertEqual(len(rows), 2)
                 conn.close()
+
+    def test_export_csv_successful(self):
+        """Verify export_csv extracts all database readings into a properly formatted CSV."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp_db, \
+             tempfile.NamedTemporaryFile(suffix=".csv") as tmp_csv:
+            db_path = Path(tmp_db.name)
+            csv_path = Path(tmp_csv.name)
+
+            conn = tcs.init_database(db_path, reset=True)
+            tcs.log_reading(
+                conn=conn,
+                timestamp="2026-11-19 12:00:00",
+                main_temp=26.50,
+                mixing_temp=25.80,
+                peltiers_active=True,
+                notes="Step 1"
+            )
+            tcs.log_reading(
+                conn=conn,
+                timestamp="2026-11-19 12:00:03",
+                main_temp=26.35,
+                mixing_temp=25.60,
+                peltiers_active=True,
+                notes=""
+            )
+            conn.close()
+
+            result = tcs.export_csv(db_path=db_path, output_file=csv_path)
+            self.assertEqual(result, csv_path)
+            self.assertTrue(csv_path.exists())
+
+            with open(csv_path, mode="r", encoding="utf-8") as f:
+                reader = list(csv.reader(f))
+
+            self.assertEqual(len(reader), 3)  # Header + 2 rows
+            self.assertEqual(
+                reader[0],
+                ["ID", "Timestamp", "Main Tank Temp (°C)", "Mixing Tank Temp (°C)", "Peltiers Active", "Notes"]
+            )
+            self.assertEqual(reader[1], ["1", "2026-11-19 12:00:00", "26.5", "25.8", "1", "Step 1"])
+            self.assertEqual(reader[2], ["2", "2026-11-19 12:00:03", "26.35", "25.6", "1", ""])
+
+    def test_export_csv_empty_table(self):
+        """Verify export_csv writes header row even if table is empty."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp_db, \
+             tempfile.NamedTemporaryFile(suffix=".csv") as tmp_csv:
+            db_path = Path(tmp_db.name)
+            csv_path = Path(tmp_csv.name)
+
+            conn = tcs.init_database(db_path, reset=True)
+            conn.close()
+
+            result = tcs.export_csv(db_path=db_path, output_file=csv_path)
+            self.assertEqual(result, csv_path)
+
+            with open(csv_path, mode="r", encoding="utf-8") as f:
+                reader = list(csv.reader(f))
+
+            self.assertEqual(len(reader), 1)
+            self.assertEqual(
+                reader[0],
+                ["ID", "Timestamp", "Main Tank Temp (°C)", "Mixing Tank Temp (°C)", "Peltiers Active", "Notes"]
+            )
+
+    def test_export_csv_nonexistent_database(self):
+        """Verify export_csv returns None and handles missing DB gracefully."""
+        missing_db = Path("/nonexistent/cooling_test_missing.db")
+        csv_path = Path("/tmp/should_not_exist.csv")
+        result = tcs.export_csv(db_path=missing_db, output_file=csv_path)
+        self.assertIsNone(result)
+
+    def test_parse_args_export_csv_flags(self):
+        """Verify CLI argument parser handles --export-csv, --export, and -e correctly."""
+        # Standalone --export-csv without value
+        args1 = tcs.parse_args(["--export-csv"])
+        self.assertEqual(args1.export_csv, "")
+
+        # --export-csv with explicit path
+        args2 = tcs.parse_args(["--export-csv", "my_log.csv"])
+        self.assertEqual(args2.export_csv, "my_log.csv")
+
+        # --export alias
+        args3 = tcs.parse_args(["--export", "export.csv"])
+        self.assertEqual(args3.export_csv, "export.csv")
+
+        # -e short option
+        args4 = tcs.parse_args(["-e", "short.csv"])
+        self.assertEqual(args4.export_csv, "short.csv")
+
+        # Default when not provided
+        args5 = tcs.parse_args([])
+        self.assertIsNone(args5.export_csv)
+
+    def test_main_export_csv_mode_exits_without_running_test(self):
+        """Verify main() executes export_csv and exits when --export-csv is passed."""
+        with patch("test_cooling_system.parse_args") as mock_parse, \
+             patch("test_cooling_system.export_csv") as mock_export, \
+             patch("test_cooling_system.run_cooling_test") as mock_run:
+
+            # With default target file
+            mock_parse.return_value = MagicMock(export_csv="", db="my_cooling.db")
+            tcs.main()
+
+            mock_export.assert_called_once_with(
+                db_path=Path("my_cooling.db"),
+                output_file=Path("my_cooling.csv")
+            )
+            mock_run.assert_not_called()
+
+            # With custom target file
+            mock_export.reset_mock()
+            mock_parse.return_value = MagicMock(export_csv="custom.csv", db="my_cooling.db")
+            tcs.main()
+
+            mock_export.assert_called_once_with(
+                db_path=Path("my_cooling.db"),
+                output_file=Path("custom.csv")
+            )
+            mock_run.assert_not_called()
+
+    def test_run_cooling_test_with_export_csv_path(self):
+        """Verify run_cooling_test automatically exports to CSV if export_csv_path is specified."""
+        with tempfile.NamedTemporaryFile(suffix=".db") as tmp_db, \
+             tempfile.NamedTemporaryFile(suffix=".csv") as tmp_csv:
+            db_path = Path(tmp_db.name)
+            csv_path = Path(tmp_csv.name)
+
+            with patch.object(tcs, "prompt_user_continue", return_value=True), \
+                 patch.object(tcs, "set_peltiers"):
+
+                tcs.run_cooling_test(
+                    db_path=db_path,
+                    interval=0.01,
+                    max_readings=2,
+                    simulate=True,
+                    export_csv_path=csv_path
+                )
+
+                self.assertTrue(csv_path.exists())
+                with open(csv_path, mode="r", encoding="utf-8") as f:
+                    reader = list(csv.reader(f))
+                self.assertEqual(len(reader), 3)
 
 
 if __name__ == "__main__":

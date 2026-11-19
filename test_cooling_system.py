@@ -24,9 +24,12 @@ Usage:
   python test_cooling_system.py --db my_test.db    # Custom database file
   python test_cooling_system.py --duration 30      # Run for 30 seconds then exit
   python test_cooling_system.py --simulate         # Force simulation mode (e.g. for testing on PC)
+  python test_cooling_system.py --export-csv       # Export saved database to cooling_test.csv and exit
+  python test_cooling_system.py --export-csv out.csv # Export saved database to out.csv and exit
 """
 
 import argparse
+import csv
 from datetime import datetime
 import os
 from pathlib import Path
@@ -203,6 +206,58 @@ def log_reading(
             )
         )
         return cursor.lastrowid
+
+
+def export_csv(db_path: Path | str, output_file: Path | str) -> Path | None:
+    """
+    Exports cooling test readings from the SQLite database to a CSV file.
+    """
+    db_path = Path(db_path)
+    if not db_path.exists():
+        print(f"Error: Database {db_path} does not exist.")
+        return None
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """
+            SELECT id, timestamp, main_tank_temp, mixing_tank_temp, peltiers_active, notes
+            FROM cooling_test_readings
+            ORDER BY id ASC
+            """
+        )
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        print(f"Error reading cooling test readings from {db_path}: {e}")
+        return None
+    finally:
+        conn.close()
+
+    output_path = Path(output_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(
+            ["ID", "Timestamp", "Main Tank Temp (°C)", "Mixing Tank Temp (°C)", "Peltiers Active", "Notes"]
+        )
+        for row in rows:
+            writer.writerow(
+                [
+                    row["id"],
+                    row["timestamp"],
+                    row["main_tank_temp"] if row["main_tank_temp"] is not None else "",
+                    row["mixing_tank_temp"] if row["mixing_tank_temp"] is not None else "",
+                    row["peltiers_active"],
+                    row["notes"] or "",
+                ]
+            )
+
+    print(f"Exported {len(rows)} cooling test readings to {output_path.resolve()}")
+    return output_path
 
 
 def check_temperature_sensors(
@@ -441,7 +496,8 @@ def run_cooling_test(
     mixing_id: str | None = None,
     simulate: bool = False,
     auto_yes: bool = False,
-    reset_db: bool = False
+    reset_db: bool = False,
+    export_csv_path: Path | str | None = None
 ):
     """
     Main test execution workflow.
@@ -589,6 +645,9 @@ def run_cooling_test(
 
         print("=" * 76 + "\n")
 
+        if export_csv_path:
+            export_csv(db_path, export_csv_path)
+
 
 def parse_args(args=None):
     parser = argparse.ArgumentParser(
@@ -645,11 +704,30 @@ def parse_args(args=None):
         default=None,
         help="Explicit 1-Wire device ID for Mixing Tank sensor (e.g. 28-000000b260f4)"
     )
+    parser.add_argument(
+        "--export-csv", "--export", "-e",
+        dest="export_csv",
+        nargs="?",
+        const="",
+        default=None,
+        type=str,
+        help="Export saved database readings to a CSV file and exit (optional file path, default: <db_name>.csv)"
+    )
     return parser.parse_args(args)
 
 
 def main():
     args = parse_args()
+
+    if args.export_csv is not None:
+        db_path = Path(args.db)
+        if args.export_csv:
+            out_file = Path(args.export_csv)
+        else:
+            out_file = db_path.with_suffix(".csv")
+        export_csv(db_path=db_path, output_file=out_file)
+        return
+
     run_cooling_test(
         db_path=Path(args.db),
         interval=args.interval,
