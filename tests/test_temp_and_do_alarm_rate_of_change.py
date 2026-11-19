@@ -333,6 +333,122 @@ console.log("PAGE_SWITCH_VERIFIED_SUCCESS");
         self.assertEqual(proc.returncode, 0, f"Page switch test failed: {proc.stderr}\n{proc.stdout}")
         self.assertIn("PAGE_SWITCH_VERIFIED_SUCCESS", proc.stdout)
 
+    def test_nav_status_ignores_adjusting_and_displays_other_readings(self):
+        """
+        Verify that when temp/do status is adjusting, updateNavStatus does NOT display
+        adjusting in the main status indicator, but displays based on other readings
+        (e.g., optimal when ph/salinity are stable, warning if one hits warning, etc.).
+        """
+        node_script = """
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const code = fs.readFileSync(process.argv[1], "utf8");
+
+const navIndicator = {
+  classList: {
+    classes: new Set(),
+    remove: function(...args) { args.forEach(c => this.classes.delete(c)); },
+    add: function(c) { this.classes.add(c); }
+  },
+  lastChild: { textContent: "" }
+};
+
+const doc = {
+  getElementById: (id) => {
+    if (id === "status-indicator-nav") return navIndicator;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+const win = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+};
+
+const ctx = vm.createContext({
+  window: win,
+  document: doc,
+  sessionStorage: win.sessionStorage,
+  localStorage: win.localStorage,
+  CustomEvent: function() {},
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout
+});
+
+vm.runInContext(code, ctx);
+
+const { recordSetpointChange, isRateOfChangeAdjusting, updateNavStatus, setThresholds } = ctx.window.HatcheryRateOfChange;
+
+// Set thresholds in context
+setThresholds([
+  { metric: "temperature", min_value: 28.0, max_value: 28.0 },
+  { metric: "dissolved_oxygen", min_value: 8.0, max_value: 8.0 },
+  { metric: "ph", min_value: 7.4, max_value: 8.4 },
+  { metric: "salinity", min_value: 28.0, max_value: 35.0 }
+]);
+
+// Trigger adjusting on temperature (setpoint 28.0, reading 26.0)
+recordSetpointChange("temperature", 28.0);
+assert.strictEqual(isRateOfChangeAdjusting("temperature", 26.0), true, "Temp should be adjusting");
+
+// 1. Temp is adjusting, DO/pH/Salinity are optimal -> Main indicator must display Optimal!
+updateNavStatus({
+  temperature: 26.0,
+  dissolved_oxygen: 8.0,
+  ph: 7.8,
+  salinity: 32.0
+});
+assert.strictEqual(navIndicator.lastChild.textContent.trim(), "Optimal", "Indicator should be Optimal when temp is adjusting and others are optimal");
+
+// 2. Temp is adjusting, DO/Salinity optimal, but pH hits Warning (e.g. 8.35 in warning buffer) -> Main indicator must display Warning!
+updateNavStatus({
+  temperature: 26.0,
+  dissolved_oxygen: 8.0,
+  ph: 8.35,
+  salinity: 32.0
+});
+assert.strictEqual(navIndicator.lastChild.textContent.trim(), "Warning", "Indicator should be Warning when pH hits warning");
+
+// 3. Temp is adjusting, DO/Salinity optimal, but pH hits Critical (e.g. 8.6 > 8.4) -> Main indicator must display Critical!
+updateNavStatus({
+  temperature: 26.0,
+  dissolved_oxygen: 8.0,
+  ph: 8.6,
+  salinity: 32.0
+});
+assert.strictEqual(navIndicator.lastChild.textContent.trim(), "Critical", "Indicator should be Critical when pH hits critical");
+
+console.log("NAV_STATUS_ADJUSTING_TEST_PASSED");
+"""
+        proc = subprocess.run(
+            ["node", "-e", node_script, str(self.dashboard_js_path)],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Nav status test failed: {proc.stderr}\n{proc.stdout}")
+        self.assertIn("NAV_STATUS_ADJUSTING_TEST_PASSED", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

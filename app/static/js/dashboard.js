@@ -511,20 +511,27 @@
       return;
     }
 
-    const states = Object.keys(metrics).map((metric) => {
-      const val = Number(reading[metric]);
-      if ((metric === "temperature" || metric === "dissolved_oxygen") && isRateOfChangeAdjusting(metric, val)) {
-        return "adjusting";
-      }
-      return conditionFor(metric, val);
-    });
-    const overallState = states.includes("critical")
+    // When status for temp/do is adjusting, do not display adjusting in the main status indicator,
+    // but display based on the other readings (e.g. if pH and salinity are stable, display optimal;
+    // if one hits warning, display warning; etc.).
+    const nonAdjustingStates = Object.keys(metrics)
+      .filter((metric) => {
+        const val = Number(reading[metric]);
+        const isAdjusting =
+          (metric === "temperature" || metric === "dissolved_oxygen") &&
+          isRateOfChangeAdjusting(metric, val);
+        return !isAdjusting;
+      })
+      .map((metric) => {
+        const val = Number(reading[metric]);
+        return conditionFor(metric, val);
+      });
+
+    const overallState = nonAdjustingStates.includes("critical")
       ? "critical"
-      : states.includes("warning")
+      : nonAdjustingStates.includes("warning")
       ? "warning"
-      : states.includes("adjusting")
-      ? "adjusting"
-      : states.every((s) => s === "neutral")
+      : nonAdjustingStates.length > 0 && nonAdjustingStates.every((s) => s === "neutral")
       ? "neutral"
       : "optimal";
 
@@ -1082,6 +1089,10 @@
       })
       .join("") || `<tr><td colspan="4">No pH or salinity thresholds available.</td></tr>`;
     bindThresholdInputs();
+  }
+
+  function setThresholds(next) {
+    thresholds = next || [];
   }
 
   async function loadThresholds() {
@@ -1684,6 +1695,8 @@
       setpointTrackers,
       recordSetpointChange,
       isRateOfChangeAdjusting,
+      updateNavStatus,
+      setThresholds,
     };
   }
 })();
