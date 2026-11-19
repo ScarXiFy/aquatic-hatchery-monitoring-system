@@ -21,6 +21,20 @@
     </nav>
 
     <div class="topbar-actions">
+      <button class="topbar-btn calibration-btn" id="open-calibration-btn" type="button" aria-label="Calibrate Sensors" title="Sensor Calibration">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="4" y1="21" x2="4" y2="14"></line>
+          <line x1="4" y1="10" x2="4" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12" y2="3"></line>
+          <line x1="20" y1="21" x2="20" y2="16"></line>
+          <line x1="20" y1="12" x2="20" y2="3"></line>
+          <line x1="1" y1="14" x2="7" y2="14"></line>
+          <line x1="9" y1="8" x2="15" y2="8"></line>
+          <line x1="17" y1="16" x2="23" y2="16"></line>
+        </svg>
+        <span>Calibrate</span>
+      </button>
       <span class="status-pill" id="status-indicator-nav">
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path d="M3 12h4l3-7 4 14 3-7h4" />
@@ -60,6 +74,139 @@
   <main class="page-shell">
     {% block content %}{% endblock %}
   </main>
+
+  <!-- Sensor Calibration Modal Overlay -->
+  <div id="calibration-modal-overlay" class="calibration-modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="calibration-modal-title">
+    <div class="calibration-modal-card">
+      <div class="calibration-modal-header">
+        <h2 id="calibration-modal-title">Sensor Calibration</h2>
+        <button id="calibration-modal-close-btn" type="button" class="calibration-close-btn" aria-label="Close calibration modal" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="calibration-modal-body">
+        <!-- Inline Status & Feedback Banner -->
+        <div id="calibration-feedback" class="calibration-feedback" hidden role="status" aria-live="polite">
+          <span class="feedback-icon">✓</span>
+          <span class="feedback-text" id="calibration-feedback-text">Calibration was successful.</span>
+        </div>
+
+        <!-- Sensor Selection Dropdown -->
+        <div class="calibration-section sensor-select-section">
+          <label for="calibration-sensor-select" class="calibration-label">Select Sensor to Calibrate</label>
+          <div class="select-wrapper">
+            <select id="calibration-sensor-select" class="calibration-select" aria-label="Select sensor to calibrate">
+              <option value="ph">pH Sensor</option>
+              <option value="do">Dissolved Oxygen Sensor</option>
+              <option value="salinity">Salinity / EC Sensor</option>
+              <option value="temp">Water Temperature Sensor - Main Tank</option>
+              <option value="mixing_temp">Mixing Tank Temperature Sensor</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Live Sensor Signal Display -->
+        <div class="live-reading-card" id="calibration-live-card">
+          <div class="live-reading-header">
+            <div class="live-indicator-wrap">
+              <span class="live-indicator-dot"></span>
+              <span class="live-indicator-label">Live Sensor Signal</span>
+            </div>
+          </div>
+          <div class="live-reading-content">
+            <div class="live-metric-block">
+              <span class="live-metric-label" id="calibration-actual-label">Actual Voltage Reading</span>
+              <div class="live-metric-value-wrap">
+                <span class="live-metric-value" id="calibration-actual-value">1.605</span>
+                <span class="live-metric-unit" id="calibration-actual-unit">V</span>
+              </div>
+            </div>
+            <div class="live-metric-divider" aria-hidden="true"></div>
+            <div class="live-metric-block live-metric-derived">
+              <span class="live-metric-label" id="calibration-derived-label">Current Calibrated Output</span>
+              <div class="live-metric-value-wrap">
+                <span class="live-metric-value secondary" id="calibration-derived-value">7.00</span>
+                <span class="live-metric-unit secondary" id="calibration-derived-unit">pH</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Calibration Reference Points Section -->
+        <div class="calibration-section points-section">
+          <div class="points-header-row">
+            <h3 class="points-section-title">Calibration Points</h3>
+          </div>
+
+          <!-- Calibration Table Rows -->
+          <div class="calibration-points-table" role="table" aria-label="Calibration points table">
+            <div class="points-table-header" role="row">
+              <span class="col-pt" role="columnheader">Point</span>
+              <span class="col-ref" id="col-ref-title" role="columnheader">Reference Reading (<span class="unit-span">pH</span>)</span>
+              <span class="col-sensor" id="col-sensor-title" role="columnheader">Actual Sensor Reading (<span class="unit-span">V</span>)</span>
+              <span class="col-actions" role="columnheader" aria-label="Actions"></span>
+            </div>
+            <div id="calibration-points-list" class="points-rows-container">
+              <!-- Dynamically populated via calibration.js -->
+            </div>
+          </div>
+
+          <div class="points-footer-bar">
+            <button type="button" id="add-calibration-point-btn" class="btn-add-point" aria-label="Add another calibration point">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <span>Add Calibration Point</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Calibration Equation Output Area -->
+        <div class="calibration-section equation-result-section" id="equation-result-section">
+          <div class="equation-header">
+            <h4>Active Calibration Equation</h4>
+            <span class="equation-status-pill default" id="equation-status-pill">Factory Default</span>
+          </div>
+          <div class="equation-box">
+            <code class="equation-text" id="calibration-equation-display">pH = (-6.4140) · V + (17.2917)</code>
+          </div>
+          <div class="equation-parameters-grid">
+            <div class="param-card">
+              <span class="param-title" id="param-slope-label">Slope (m)</span>
+              <span class="param-value" id="param-slope-value">-6.4140</span>
+            </div>
+            <div class="param-card">
+              <span class="param-title" id="param-offset-label">Offset / Intercept (b)</span>
+              <span class="param-value" id="param-offset-value">+17.2917</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="calibration-modal-footer">
+        <div class="footer-primary-group">
+          <button type="button" id="cancel-calibration-btn" class="btn-modal-cancel">Cancel</button>
+          <button type="button" id="apply-calibration-btn" class="btn-modal-calibrate" title="Calculate calibration equation from points">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+            <span>Calibrate</span>
+          </button>
+          <button type="button" id="commission-calibration-btn" class="btn-modal-commission" title="Push calibration equation to system backend" disabled>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+              <polyline points="16 6 12 2 8 6" />
+              <line x1="12" y1="2" x2="12" y2="15" />
+            </svg>
+            <span>Commission</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Warning Alert Modal Overlay -->
   <div id="alert-modal-overlay" class="alert-modal-overlay" hidden aria-modal="true" role="dialog">
@@ -107,5 +254,6 @@
   <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
   <script src="{{ url_for('static', filename='js/sound.js') }}"></script>
   <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/calibration.js') }}"></script>
 </body>
 </html>
