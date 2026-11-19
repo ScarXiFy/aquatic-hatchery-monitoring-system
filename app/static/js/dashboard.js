@@ -26,6 +26,7 @@
   };
 
   const STORAGE_KEY_SETPOINT_TRACKERS = "hatchery:setpoint-trackers";
+  const STORAGE_KEY_THRESHOLDS = "hatchery:thresholds";
 
   function getStoredItem(key) {
     try {
@@ -56,6 +57,16 @@
       localStorage.removeItem(key);
     } catch (e) {}
   }
+
+  try {
+    const savedThresholds = getStoredItem(STORAGE_KEY_THRESHOLDS);
+    if (savedThresholds) {
+      const parsed = JSON.parse(savedThresholds);
+      if (Array.isArray(parsed) && parsed.length) {
+        thresholds = parsed;
+      }
+    }
+  } catch (e) {}
 
   const setpointTrackers = {
     temperature: {
@@ -834,6 +845,7 @@
 
   function checkAlertTriggers(reading) {
     if (!reading) return;
+    if (!thresholds || !thresholds.length) return;
     const timeFormatted = formatTimestamp(reading.timestamp);
     const timeOnlyFormatted = formatTimeOnly(reading.timestamp);
     let newlyTriggered = false;
@@ -899,19 +911,12 @@
         dismissedAlertKeys.delete(`${metric}_CRITICAL`);
         dismissedAlertKeys.delete(`${metric}_Warning`);
         dismissedAlertKeys.delete(`${metric}_Critical`);
+        setStoredItem(STORAGE_KEY_DISMISSED_KEYS, JSON.stringify(Array.from(dismissedAlertKeys)));
       }
       previousMetricStates[metric] = state;
     });
 
     setStoredItem(STORAGE_KEY_METRIC_STATES, JSON.stringify(previousMetricStates));
-
-    if (window.HatcherySound) {
-      if (notificationSystemState !== "dismissed") {
-        window.HatcherySound.updateAlarmState(activeAlertsMap);
-      } else {
-        window.HatcherySound.stopAllAudio();
-      }
-    }
 
     if (activeAlertsMap.size > 0) {
       if (notificationSystemState === "minimized") {
@@ -919,21 +924,37 @@
         // keep overlay hidden and update floating widget in place
         updateFloatingWidget();
       } else if (notificationSystemState === "dismissed") {
-        // When alert is closed, maintain closed state even though readings are changing:
-        // keep both overlay and docked widget hidden, do not pop up on screen
-        hideAllAlertUI();
+        const hasUndismissedAlert = Array.from(activeAlertsMap.values()).some(
+          (item) => !dismissedAlertKeys.has(item.key)
+        );
+        if (hasUndismissedAlert) {
+          // If a parameter reached optimal previously and has now triggered a warning/critical reading again,
+          // or a new parameter reading is detected, pop up the overlay alert
+          showOverlay();
+        } else {
+          // When alert is closed, maintain closed state while the same alert condition persists:
+          // keep both overlay and docked widget hidden, do not pop up on screen
+          hideAllAlertUI();
+        }
       } else {
         // Active overlay or newly triggered initial alert: display/update overlay
         showOverlay();
       }
     } else {
       hideAllAlertUI();
-      if (notificationSystemState === "overlay") {
-        notificationSystemState = "idle";
-        removeStoredItem(STORAGE_KEY_ALERT_STATE);
-        removeStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
-        removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
-        removeStoredItem(STORAGE_KEY_DISMISSED_KEYS);
+      notificationSystemState = "idle";
+      dismissedAlertKeys.clear();
+      removeStoredItem(STORAGE_KEY_ALERT_STATE);
+      removeStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
+      removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
+      removeStoredItem(STORAGE_KEY_DISMISSED_KEYS);
+    }
+
+    if (window.HatcherySound) {
+      if (notificationSystemState !== "dismissed" && activeAlertsMap.size > 0) {
+        window.HatcherySound.updateAlarmState(activeAlertsMap);
+      } else {
+        window.HatcherySound.stopAllAudio();
       }
     }
   }
@@ -1000,12 +1021,20 @@
     }
 
     if (notificationSystemState === "minimized") {
+      const overlay = document.getElementById("alert-modal-overlay");
       const docked = document.getElementById("alert-docked-card");
       const dockedText = document.getElementById("alert-docked-text");
       const savedDockedText = getStoredItem(STORAGE_KEY_DOCKED_TEXT);
-      if (docked && savedDockedText) {
+      if (overlay) {
+        overlay.hidden = true;
+      }
+      if (docked) {
         if (dockedText) {
-          dockedText.innerHTML = savedDockedText;
+          if (savedDockedText) {
+            dockedText.innerHTML = savedDockedText;
+          } else {
+            dockedText.textContent = "System Alert (Minimized)";
+          }
         }
         docked.hidden = false;
       }
@@ -1098,6 +1127,7 @@
 
   function setThresholds(next) {
     thresholds = next || [];
+    setStoredItem(STORAGE_KEY_THRESHOLDS, JSON.stringify(thresholds));
   }
 
   async function loadThresholds() {
@@ -1108,6 +1138,7 @@
       }
       const payload = await response.json();
       thresholds = payload.thresholds || [];
+      setStoredItem(STORAGE_KEY_THRESHOLDS, JSON.stringify(thresholds));
       thresholds.forEach((item) => {
         if (item.metric === "temperature" && item.min_value !== undefined) {
           controlState.temperature_setpoint = Number(item.min_value);
@@ -1116,6 +1147,9 @@
         }
       });
       renderThresholds();
+      if (latestReading) {
+        checkAlertTriggers(latestReading);
+      }
       window.dispatchEvent(new CustomEvent("hatchery:thresholds", { detail: thresholds }));
     } catch (e) {
       console.warn("[DASHBOARD] Failed to load thresholds:", e);
@@ -1286,6 +1320,7 @@
 
     const payload = await response.json();
     thresholds = payload.thresholds || [];
+    setStoredItem(STORAGE_KEY_THRESHOLDS, JSON.stringify(thresholds));
     if (latestReading) {
       updateGauges(latestReading);
     }
@@ -1476,14 +1511,18 @@
         sessionStorage.setItem("hatchery:server_boot", newBoot);
       }
     });
-    socket.on("connect", () => {
+    socket.on("connect", async () => {
       updateSocketStatus(true);
       window.dispatchEvent(new CustomEvent("hatchery:socket-connected"));
-      if (!isEditingThresholds()) {
-        loadThresholds();
+      try {
+        if (!isEditingThresholds()) {
+          await loadThresholds();
+        }
+        await loadControls();
+        await loadLatestReading();
+      } catch (e) {
+        console.warn("[DASHBOARD] Socket connect sync error:", e);
       }
-      loadControls();
-      loadLatestReading();
       loadDayHistory();
       loadNotificationsFromDB();
       hasSocketConnected = true;
@@ -1679,21 +1718,24 @@
     document.addEventListener("fullscreenchange", updateFullscreenIcon);
   }
 
-  document.addEventListener("DOMContentLoaded", () => {
+  document.addEventListener("DOMContentLoaded", async () => {
     updateDateTime();
     setInterval(updateDateTime, 30000);
     bindControls();
     initializeHomeSlider();
     bindNotificationUI();
     bindFullscreenUI();
+    bindSocket();
+    try {
+      await Promise.allSettled([loadControls(), loadThresholds()]);
+      await loadLatestReading();
+    } catch (e) {
+      console.warn("[DASHBOARD] Init sync error:", e);
+    }
     Promise.allSettled([
-      loadControls(),
-      loadThresholds(),
-      loadLatestReading(),
       loadDayHistory(),
       loadNotificationsFromDB(),
     ]).then(scheduleMidnightTrendRefresh);
-    bindSocket();
   });
   if (typeof window !== "undefined") {
     window.HatcheryRateOfChange = {

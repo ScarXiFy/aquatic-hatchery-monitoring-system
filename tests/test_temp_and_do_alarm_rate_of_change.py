@@ -567,6 +567,27 @@ for (let temp of [31.2, 31.8, 32.0, 31.5]) {
   assert.strictEqual(dockedEl.hidden, true, "Docked card must STAY hidden after closing");
 }
 
+// 6. Reading REACHES OPTIMAL STATE (temp returns to 26.0)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:09Z",
+  temperature: 26.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, true, "Overlay should be hidden when optimal");
+assert.strictEqual(dockedEl.hidden, true, "Docked card should be hidden when optimal");
+
+// 7. Reading becomes CRITICAL / WARNING AGAIN (e.g. temp reaches 30.0 again)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:12Z",
+  temperature: 30.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, false, "Alert overlay MUST POP UP AGAIN when warning/critical is detected after reaching optimal!");
+
 console.log("MINIMIZED_AND_CLOSED_MAINTAINED_SUCCESS");
 """
         proc = subprocess.run(
@@ -576,6 +597,427 @@ console.log("MINIMIZED_AND_CLOSED_MAINTAINED_SUCCESS");
         )
         self.assertEqual(proc.returncode, 0, f"Alert maintain state test failed: {proc.stderr}\n{proc.stdout}")
         self.assertIn("MINIMIZED_AND_CLOSED_MAINTAINED_SUCCESS", proc.stdout)
+
+    def test_alert_pops_up_again_when_warning_critical_detected_after_reaching_optimal(self):
+        """
+        Verify that if an alert was previously exited/dismissed by the operator,
+        once the parameter reading reaches optimal, any subsequent warning or critical
+        reading triggers the alert modal overlay to pop up again.
+        """
+        node_script = """
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const code = fs.readFileSync(process.argv[1], "utf8");
+
+const overlayEl = { hidden: true };
+const dockedEl = { hidden: true };
+const dockedTextEl = { textContent: "", innerHTML: "" };
+const modalBodyEl = { innerHTML: "", appendChild: () => {} };
+
+const storageMap = new Map();
+const storage = {
+  getItem: (k) => (storageMap.has(k) ? storageMap.get(k) : null),
+  setItem: (k, v) => storageMap.set(k, String(v)),
+  removeItem: (k) => storageMap.delete(k)
+};
+
+const doc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return overlayEl;
+    if (id === "alert-docked-card") return dockedEl;
+    if (id === "alert-docked-text") return dockedTextEl;
+    if (id === "alert-modal-body") return modalBodyEl;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+let alarmSoundCalls = 0;
+let alarmSoundActive = false;
+
+const win = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: {
+    updateAlarmState: (map) => {
+      alarmSoundCalls++;
+      alarmSoundActive = map && map.size > 0;
+    },
+    stopAllAudio: () => {
+      alarmSoundActive = false;
+    }
+  },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: storage,
+  localStorage: storage
+};
+
+const ctx = vm.createContext({
+  window: win,
+  document: doc,
+  sessionStorage: storage,
+  localStorage: storage,
+  CustomEvent: function() {},
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout
+});
+
+vm.runInContext(code, ctx);
+
+const { setThresholds, checkAlertTriggers, dismissOverlay } = ctx.window.HatcheryRateOfChange;
+
+setThresholds([
+  { metric: "temperature", min_value: 26.0, max_value: 26.0 },
+  { metric: "dissolved_oxygen", min_value: 7.2, max_value: 7.2 },
+  { metric: "ph", min_value: 7.4, max_value: 8.4 },
+  { metric: "salinity", min_value: 28.0, max_value: 35.0 }
+]);
+
+// Step 1: Trigger alert (pH = 6.8 is WARNING, DO = 7.2 is optimal, temp = 26.0 is optimal)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:00Z",
+  temperature: 26.0,
+  dissolved_oxygen: 7.2,
+  ph: 6.8,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, false, "Alert overlay should pop up on warning");
+assert.strictEqual(alarmSoundActive, true, "Alarm sound should be active");
+
+// Step 2: Operator exits / dismisses the alert
+dismissOverlay();
+assert.strictEqual(overlayEl.hidden, true, "Alert overlay should be dismissed and hidden");
+assert.strictEqual(alarmSoundActive, false, "Alarm sound should stop on dismissal");
+
+// Step 3: Readings stay in warning state; overlay stays hidden
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:03Z",
+  temperature: 26.0,
+  dissolved_oxygen: 7.2,
+  ph: 6.9,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, true, "Alert must stay suppressed while warning persists");
+
+// Step 4: Reading REACHES OPTIMAL STATE (pH returns to 8.0)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:06Z",
+  temperature: 26.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, true, "Alert remains hidden in optimal state");
+assert.strictEqual(storage.getItem("hatchery:alert-state"), null, "Stored alert state must be cleaned up on optimal");
+
+// Step 5: Reading detects warning / critical reading again (pH drops to 6.5)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:09Z",
+  temperature: 26.0,
+  dissolved_oxygen: 7.2,
+  ph: 6.5,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, false, "Alert overlay MUST POP UP AGAIN after reaching optimal and detecting warning/critical!");
+assert.strictEqual(alarmSoundActive, true, "Alarm sound must play again");
+
+console.log("RE_TRIGGER_AFTER_OPTIMAL_PASSED");
+"""
+        proc = subprocess.run(
+            ["node", "-e", node_script, str(self.dashboard_js_path)],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Re-trigger after optimal test failed: {proc.stderr}\n{proc.stdout}")
+        self.assertIn("RE_TRIGGER_AFTER_OPTIMAL_PASSED", proc.stdout)
+
+    def test_page_switch_from_home_to_view_graphs_preserves_minimized_alert_state(self):
+        """
+        Verify that after minimizing the warning on the main (home) page,
+        navigating to the view graphs page keeps the alert state minimized
+        so the user does not have to minimize it again.
+        """
+        node_script = """
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const code = fs.readFileSync(process.argv[1], "utf8");
+
+// Shared browser storage across page navigation
+const sharedSession = new Map();
+const sharedLocal = new Map();
+
+function makeStorage(map) {
+  return {
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => map.set(k, String(v)),
+    removeItem: (k) => map.delete(k)
+  };
+}
+
+// -------------------------------------------------------------
+// 1. User on Home Page (/): alert triggers and user minimizes it
+// -------------------------------------------------------------
+const homeOverlay = { hidden: true };
+const homeDocked = { hidden: true };
+const homeDockedText = { textContent: "", innerHTML: "" };
+const homeModalBody = { innerHTML: "", appendChild: () => {} };
+
+const homeDoc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return homeOverlay;
+    if (id === "alert-docked-card") return homeDocked;
+    if (id === "alert-docked-text") return homeDockedText;
+    if (id === "alert-modal-body") return homeModalBody;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+const homeWin = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: makeStorage(sharedSession),
+  localStorage: makeStorage(sharedLocal)
+};
+
+const homeCtx = vm.createContext({
+  window: homeWin,
+  document: homeDoc,
+  sessionStorage: homeWin.sessionStorage,
+  localStorage: homeWin.localStorage,
+  CustomEvent: function() {},
+  fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  setInterval: () => 1,
+  clearInterval: () => {}
+});
+
+vm.runInContext(code, homeCtx);
+
+const homeApi = homeCtx.window.HatcheryRateOfChange;
+
+// Set thresholds on home page
+homeApi.setThresholds([
+  { metric: "temperature", min_value: 26.0, max_value: 26.0 },
+  { metric: "dissolved_oxygen", min_value: 7.2, max_value: 7.2 },
+  { metric: "ph", min_value: 7.4, max_value: 8.4 },
+  { metric: "salinity", min_value: 28.0, max_value: 35.0 }
+]);
+
+// Alert triggers on Home page (temperature is 30.0 °C critical)
+homeApi.checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:00Z",
+  temperature: 30.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+assert.strictEqual(homeOverlay.hidden, false, "Overlay should initially pop up on Home page");
+
+// User minimizes the alert on Home page
+homeApi.minimizeOverlay();
+assert.strictEqual(homeOverlay.hidden, true, "Overlay should be hidden on Home page after minimizing");
+assert.strictEqual(homeDocked.hidden, false, "Docked card should be visible on Home page");
+assert.strictEqual(sharedLocal.get("hatchery:alert-state"), "minimized");
+assert.strictEqual(sharedLocal.get("hatchery:alert-minimized"), "true");
+
+// -------------------------------------------------------------
+// 2. User navigates to View Graphs Page (/graph)
+// -------------------------------------------------------------
+const graphOverlay = { hidden: true };
+const graphDocked = { hidden: true };
+const graphDockedText = { textContent: "", innerHTML: "" };
+const graphModalBody = { innerHTML: "", appendChild: () => {} };
+
+let domListeners = [];
+const graphDoc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return graphOverlay;
+    if (id === "alert-docked-card") return graphDocked;
+    if (id === "alert-docked-text") return graphDockedText;
+    if (id === "alert-modal-body") return graphModalBody;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: (event, handler) => {
+    if (event === "DOMContentLoaded") {
+      domListeners.push(handler);
+    }
+  }
+};
+
+const graphWin = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: makeStorage(sharedSession),
+  localStorage: makeStorage(sharedLocal)
+};
+
+const graphCtx = vm.createContext({
+  window: graphWin,
+  document: graphDoc,
+  sessionStorage: graphWin.sessionStorage,
+  localStorage: graphWin.localStorage,
+  CustomEvent: function() {},
+  fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  setInterval: () => 1,
+  clearInterval: () => {}
+});
+
+vm.runInContext(code, graphCtx);
+
+// Fire DOMContentLoaded on View Graphs page
+for (let handler of domListeners) {
+  handler();
+}
+
+assert.strictEqual(graphOverlay.hidden, true, "Overlay MUST stay hidden on View Graphs page");
+assert.strictEqual(graphDocked.hidden, false, "Docked card MUST be visible on View Graphs page");
+
+const graphApi = graphCtx.window.HatcheryRateOfChange;
+
+// Live reading arrives on View Graphs page (temp is still 30.0 °C critical)
+graphApi.checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:03Z",
+  temperature: 30.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+
+// The alert MUST REMAIN MINIMIZED — overlay stays hidden, docked stays visible!
+assert.strictEqual(graphOverlay.hidden, true, "Overlay must REMAIN hidden on View Graphs page without needing re-minimizing!");
+assert.strictEqual(graphDocked.hidden, false, "Docked card must REMAIN visible on View Graphs page");
+
+// -------------------------------------------------------------
+// 3. User navigates back to Home Page (/) from View Graph
+// -------------------------------------------------------------
+const backHomeOverlay = { hidden: true };
+const backHomeDocked = { hidden: true };
+const backHomeDockedText = { textContent: "", innerHTML: "" };
+let backHomeDomListeners = [];
+
+const backHomeDoc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return backHomeOverlay;
+    if (id === "alert-docked-card") return backHomeDocked;
+    if (id === "alert-docked-text") return backHomeDockedText;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: (event, handler) => {
+    if (event === "DOMContentLoaded") {
+      backHomeDomListeners.push(handler);
+    }
+  }
+};
+
+const backHomeWin = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: makeStorage(sharedSession),
+  localStorage: makeStorage(sharedLocal)
+};
+
+const backHomeCtx = vm.createContext({
+  window: backHomeWin,
+  document: backHomeDoc,
+  sessionStorage: backHomeWin.sessionStorage,
+  localStorage: backHomeWin.localStorage,
+  CustomEvent: function() {},
+  fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout,
+  setInterval: () => 1,
+  clearInterval: () => {}
+});
+
+vm.runInContext(code, backHomeCtx);
+
+for (let handler of backHomeDomListeners) {
+  handler();
+}
+
+assert.strictEqual(backHomeOverlay.hidden, true, "Overlay must remain hidden when returning to Home page");
+assert.strictEqual(backHomeDocked.hidden, false, "Docked card must remain visible when returning to Home page");
+
+console.log("MINIMIZED_SHARED_ACROSS_PAGES_PASSED");
+process.exit(0);
+"""
+        proc = subprocess.run(
+            ["node", "-e", node_script, str(self.dashboard_js_path)],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Page switch minimize test failed: {proc.stderr}\n{proc.stdout}")
+        self.assertIn("MINIMIZED_SHARED_ACROSS_PAGES_PASSED", proc.stdout)
 
 
 if __name__ == "__main__":
