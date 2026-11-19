@@ -590,7 +590,7 @@
   let notificationHistory = [];
   let unreadCount = 0;
 
-  let notificationSystemState = "dismissed"; // "overlay", "minimized", "dismissed"
+  let notificationSystemState = "idle"; // "idle", "overlay", "minimized", "dismissed"
   const storedAlertState = getStoredItem(STORAGE_KEY_ALERT_STATE);
   const storedMinimized = getStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
   if (storedMinimized === "true" || storedAlertState === "minimized") {
@@ -599,6 +599,8 @@
     notificationSystemState = "overlay";
   } else if (storedAlertState === "dismissed") {
     notificationSystemState = "dismissed";
+  } else {
+    notificationSystemState = "idle";
   }
 
   function formatTimestamp(isoOrDate) {
@@ -904,32 +906,35 @@
     setStoredItem(STORAGE_KEY_METRIC_STATES, JSON.stringify(previousMetricStates));
 
     if (window.HatcherySound) {
-      window.HatcherySound.updateAlarmState(activeAlertsMap);
+      if (notificationSystemState !== "dismissed") {
+        window.HatcherySound.updateAlarmState(activeAlertsMap);
+      } else {
+        window.HatcherySound.stopAllAudio();
+      }
     }
 
     if (activeAlertsMap.size > 0) {
-      if (newlyTriggered) {
-        if (notificationSystemState !== "minimized") {
-          showOverlay();
-        } else {
-          updateFloatingWidget();
-        }
+      if (notificationSystemState === "minimized") {
+        // When alert is minimized, maintain minimized state even though readings are changing:
+        // keep overlay hidden and update floating widget in place
+        updateFloatingWidget();
+      } else if (notificationSystemState === "dismissed") {
+        // When alert is closed, maintain closed state even though readings are changing:
+        // keep both overlay and docked widget hidden, do not pop up on screen
+        hideAllAlertUI();
       } else {
-        if (notificationSystemState === "overlay") {
-          renderAlertModalBody();
-        } else if (notificationSystemState === "minimized") {
-          updateFloatingWidget();
-        }
+        // Active overlay or newly triggered initial alert: display/update overlay
+        showOverlay();
       }
     } else {
-      if (notificationSystemState !== "dismissed") {
-        hideAllAlertUI();
-        notificationSystemState = "dismissed";
+      hideAllAlertUI();
+      if (notificationSystemState === "overlay") {
+        notificationSystemState = "idle";
+        removeStoredItem(STORAGE_KEY_ALERT_STATE);
+        removeStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
+        removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
+        removeStoredItem(STORAGE_KEY_DISMISSED_KEYS);
       }
-      removeStoredItem(STORAGE_KEY_ALERT_STATE);
-      removeStoredItem(STORAGE_KEY_ALERT_MINIMIZED);
-      removeStoredItem(STORAGE_KEY_DOCKED_TEXT);
-      removeStoredItem(STORAGE_KEY_DISMISSED_KEYS);
     }
   }
 
@@ -1697,6 +1702,10 @@
       isRateOfChangeAdjusting,
       updateNavStatus,
       setThresholds,
+      checkAlertTriggers,
+      minimizeOverlay,
+      dismissOverlay,
+      showOverlay,
     };
   }
 })();

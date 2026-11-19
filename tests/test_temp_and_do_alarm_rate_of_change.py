@@ -449,6 +449,134 @@ console.log("NAV_STATUS_ADJUSTING_TEST_PASSED");
         self.assertEqual(proc.returncode, 0, f"Nav status test failed: {proc.stderr}\n{proc.stdout}")
         self.assertIn("NAV_STATUS_ADJUSTING_TEST_PASSED", proc.stdout)
 
+    def test_alert_maintains_minimized_and_closed_state_when_readings_change(self):
+        """
+        Verify that when an alert is minimized or closed, it maintains that minimized
+        or closed state even as readings change, preventing repeated popups.
+        """
+        node_script = """
+const fs = require("fs");
+const vm = require("vm");
+const assert = require("assert");
+
+const code = fs.readFileSync(process.argv[1], "utf8");
+
+const overlayEl = { hidden: true };
+const dockedEl = { hidden: true };
+const dockedTextEl = { textContent: "", innerHTML: "" };
+const modalBodyEl = { innerHTML: "", appendChild: () => {} };
+
+const doc = {
+  getElementById: (id) => {
+    if (id === "alert-modal-overlay") return overlayEl;
+    if (id === "alert-docked-card") return dockedEl;
+    if (id === "alert-docked-text") return dockedTextEl;
+    if (id === "alert-modal-body") return modalBodyEl;
+    return null;
+  },
+  querySelector: () => null,
+  querySelectorAll: () => [],
+  addEventListener: () => {}
+};
+
+const win = {
+  HATCHERY_METRICS: {
+    temperature: { unit: "°C", min: 15, max: 35 },
+    dissolved_oxygen: { unit: "mg/L", min: 0, max: 20 },
+    ph: { unit: "", min: 0, max: 14 },
+    salinity: { unit: "ppt", min: 0, max: 35 }
+  },
+  HatcherySound: { updateAlarmState: () => {}, stopAllAudio: () => {} },
+  dispatchEvent: () => {},
+  addEventListener: () => {},
+  sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+};
+
+const ctx = vm.createContext({
+  window: win,
+  document: doc,
+  sessionStorage: win.sessionStorage,
+  localStorage: win.localStorage,
+  CustomEvent: function() {},
+  console: console,
+  Date: Date,
+  Math: Math,
+  Number: Number,
+  Array: Array,
+  Map: Map,
+  JSON: JSON,
+  setTimeout: setTimeout,
+  clearTimeout: clearTimeout
+});
+
+vm.runInContext(code, ctx);
+
+const { setThresholds, checkAlertTriggers, minimizeOverlay, dismissOverlay } = ctx.window.HatcheryRateOfChange;
+
+setThresholds([
+  { metric: "temperature", min_value: 26.0, max_value: 26.0 },
+  { metric: "dissolved_oxygen", min_value: 7.2, max_value: 7.2 },
+  { metric: "ph", min_value: 7.4, max_value: 8.4 },
+  { metric: "salinity", min_value: 28.0, max_value: 35.0 }
+]);
+
+// 1. Initial trigger: temperature is 30.0 (> 26.0 setpoint critical)
+checkAlertTriggers({
+  timestamp: "2026-11-19T00:00:00Z",
+  temperature: 30.0,
+  dissolved_oxygen: 7.2,
+  ph: 8.0,
+  salinity: 32.0
+});
+assert.strictEqual(overlayEl.hidden, false, "Alert overlay should initially pop up on first trigger");
+
+// 2. User MINIMIZES the alert
+minimizeOverlay();
+assert.strictEqual(overlayEl.hidden, true, "Overlay must be hidden when minimized");
+assert.strictEqual(dockedEl.hidden, false, "Docked card must be visible when minimized");
+
+// 3. Readings CHANGE while minimized (e.g. temp increases to 30.5, 31.0, 31.5, 30.2)
+for (let temp of [30.5, 31.0, 31.5, 30.2, 30.8]) {
+  checkAlertTriggers({
+    timestamp: "2026-11-19T00:00:03Z",
+    temperature: temp,
+    dissolved_oxygen: 7.2,
+    ph: 8.0,
+    salinity: 32.0
+  });
+  assert.strictEqual(overlayEl.hidden, true, `Overlay must STAY hidden while minimized even as temp changes to ${temp}`);
+  assert.strictEqual(dockedEl.hidden, false, "Docked card must STAY visible while minimized");
+}
+
+// 4. User CLOSES / DISMISSES the alert
+dismissOverlay();
+assert.strictEqual(overlayEl.hidden, true, "Overlay must be hidden when dismissed");
+assert.strictEqual(dockedEl.hidden, true, "Docked card must be hidden when dismissed");
+
+// 5. Readings CHANGE while closed (e.g. temp moves to 31.2, 31.8, 32.0, or another metric like pH changes)
+for (let temp of [31.2, 31.8, 32.0, 31.5]) {
+  checkAlertTriggers({
+    timestamp: "2026-11-19T00:00:06Z",
+    temperature: temp,
+    dissolved_oxygen: 7.2,
+    ph: 8.2,
+    salinity: 32.0
+  });
+  assert.strictEqual(overlayEl.hidden, true, `Overlay must STAY hidden after closing even as temp changes to ${temp}`);
+  assert.strictEqual(dockedEl.hidden, true, "Docked card must STAY hidden after closing");
+}
+
+console.log("MINIMIZED_AND_CLOSED_MAINTAINED_SUCCESS");
+"""
+        proc = subprocess.run(
+            ["node", "-e", node_script, str(self.dashboard_js_path)],
+            capture_output=True,
+            text=True
+        )
+        self.assertEqual(proc.returncode, 0, f"Alert maintain state test failed: {proc.stderr}\n{proc.stdout}")
+        self.assertIn("MINIMIZED_AND_CLOSED_MAINTAINED_SUCCESS", proc.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
