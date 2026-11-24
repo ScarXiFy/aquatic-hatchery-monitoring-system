@@ -35,6 +35,13 @@
         </svg>
         <span>Calibrate</span>
       </button>
+      <button class="topbar-btn maintenance-btn" id="open-maintenance-btn" type="button" aria-label="Maintenance Mode" title="Maintenance Mode">
+        <svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+        </svg>
+        <span>Maintenance</span>
+        <span class="maintenance-active-dot" id="maintenance-topbar-dot" hidden aria-hidden="true"></span>
+      </button>
       <span class="status-pill" id="status-indicator-nav">
         <svg aria-hidden="true" viewBox="0 0 24 24">
           <path d="M3 12h4l3-7 4 14 3-7h4" />
@@ -94,15 +101,16 @@
           <span class="feedback-text" id="calibration-feedback-text">Calibration was successful.</span>
         </div>
 
-        <!-- Sensor Selection Buttons (5 in a row) -->
+        <!-- Sensor Selection Buttons (6 in a row) -->
         <div class="calibration-section sensor-select-section">
           <label class="calibration-label">Select Sensor to Calibrate</label>
           <div class="calibration-sensor-buttons-row" role="tablist" aria-label="Select sensor to calibrate">
             <button type="button" class="btn-sensor-select active" data-sensor="ph" aria-label="pH Sensor" title="Calibrate pH Sensor">pH Sensor</button>
             <button type="button" class="btn-sensor-select" data-sensor="do" aria-label="Dissolved Oxygen Sensor" title="Calibrate Dissolved Oxygen Sensor">DO Sensor</button>
             <button type="button" class="btn-sensor-select" data-sensor="salinity" aria-label="Salinity / EC Sensor" title="Calibrate Salinity / EC Sensor">Salinity Sensor</button>
-            <button type="button" class="btn-sensor-select" data-sensor="temp" aria-label="Water Temperature Sensor - Main Tank" title="Calibrate Water Temperature (Main Tank)">Main Temperature Sensor</button>
-            <button type="button" class="btn-sensor-select" data-sensor="mixing_temp" aria-label="Mixing Tank Temperature Sensor" title="Calibrate Mixing Tank Temperature">Mixing Temperature Sensor</button>
+            <button type="button" class="btn-sensor-select" data-sensor="temp" aria-label="Water Temperature Sensor - Main Tank" title="Calibrate Water Temperature (Main Tank)">Main Temp</button>
+            <button type="button" class="btn-sensor-select" data-sensor="mixing_temp" aria-label="Mixing Tank Temperature Sensor" title="Calibrate Mixing Tank Temperature">Mixing Temp</button>
+            <button type="button" class="btn-sensor-select" data-sensor="heating_temp" aria-label="Heating Tank Temperature Sensor" title="Calibrate Heating Tank Temperature (DS18B20 28-7cf4d4452c40)">Heating Temp</button>
           </div>
           <!-- Hidden select maintained for programmatic sync and fallback -->
           <select id="calibration-sensor-select" class="calibration-select" style="display: none;" aria-hidden="true" tabindex="-1">
@@ -111,6 +119,7 @@
             <option value="salinity">Salinity / EC Sensor</option>
             <option value="temp">Water Temperature Sensor - Main Tank</option>
             <option value="mixing_temp">Mixing Tank Temperature Sensor</option>
+            <option value="heating_temp">Heating Tank Temperature Sensor</option>
           </select>
         </div>
 
@@ -137,6 +146,26 @@
                 <span class="live-metric-value secondary" id="calibration-derived-value">7.00</span>
                 <span class="live-metric-unit secondary" id="calibration-derived-unit">pH</span>
               </div>
+            </div>
+          </div>
+          <!-- Salinity 25°C Temperature Normalization Notice (visible only for Salinity Sensor) -->
+          <div id="salinity-temp-comp-notice" class="salinity-temp-notice" hidden role="note" aria-live="polite">
+            <div class="salinity-temp-notice-header">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <span>25°C Temperature Compensation Active (Main Tank DS18B20)</span>
+            </div>
+            <p class="salinity-temp-notice-text">
+              The displayed voltage is normalized to <strong>25°C</strong> using
+              <code>V<sub>25</sub> = V<sub>raw</sub> / (1 + 0.02 &middot; (T &minus; 25))</code>.
+              Temperature <strong>T</strong> is read from the <strong>Main Tank DS18B20 sensor</strong> — you must also immerse the Main Tank DS18B20 sensor in your calibration sample solution to measure its temperature during calibration.
+            </p>
+            <div class="salinity-temp-notice-metrics">
+              <span class="salinity-comp-pill">Main Tank DS18B20 (T): <strong id="salinity-comp-temp">--</strong> °C</span>
+              <span class="salinity-comp-pill">Raw Voltage (V<sub>raw</sub>): <strong id="salinity-comp-raw-v">--</strong> V</span>
             </div>
           </div>
         </div>
@@ -256,6 +285,140 @@
     </div>
   </div>
 
+  <!-- Maintenance Mode Modal Overlay -->
+  <div id="maintenance-modal-overlay" class="maintenance-modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="maintenance-modal-title">
+    <div class="maintenance-modal-card">
+      <div class="maintenance-modal-header">
+        <div class="maintenance-title-wrap">
+          <h2 id="maintenance-modal-title">Maintenance Mode</h2>
+          <span id="maintenance-mode-badge" class="maintenance-mode-badge normal">Normal Mode</span>
+        </div>
+        <button id="maintenance-modal-close-btn" type="button" class="calibration-close-btn" aria-label="Close maintenance modal" title="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="maintenance-modal-body">
+        <!-- Mode Banner & Master Switch -->
+        <div id="maintenance-mode-banner" class="maintenance-mode-banner">
+          <strong id="maintenance-banner-heading">Normal Mode Active</strong>
+          <button id="maintenance-mode-toggle-btn" type="button" class="btn-maintenance-toggle">
+            Enable Maintenance Mode
+          </button>
+        </div>
+
+        <!-- Manual Component Controls Grid -->
+        <div id="maintenance-controls-grid" class="maintenance-controls-grid is-locked">
+          <!-- Heater -->
+          <div class="maint-card" data-maint-card="heater">
+            <div class="maint-card-top">
+              <h3>Heater</h3>
+              <span class="maint-state-pill" id="maint-status-heater">OFF</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="heater" aria-pressed="false" disabled>
+              Turn ON
+            </button>
+          </div>
+
+          <!-- Peltier Modules -->
+          <div class="maint-card" data-maint-card="peltiers">
+            <div class="maint-card-top">
+              <h3>Peltier Modules</h3>
+              <span class="maint-state-pill" id="maint-status-peltiers">OFF</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="peltiers" aria-pressed="false" disabled>
+              Turn ON
+            </button>
+          </div>
+
+          <!-- Mixing Fan -->
+          <div class="maint-card" data-maint-card="mixing_fan">
+            <div class="maint-card-top">
+              <h3>Mixing Fan</h3>
+              <span class="maint-state-pill" id="maint-status-mixing_fan">OFF</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="mixing_fan" aria-pressed="false" disabled>
+              Turn ON
+            </button>
+          </div>
+
+          <!-- Heating Tank Valve -->
+          <div class="maint-card" data-maint-card="heating_valve">
+            <div class="maint-card-top">
+              <h3>Heating Tank Valve</h3>
+              <span class="maint-state-pill" id="maint-status-heating_valve">CLOSED</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="heating_valve" data-maint-kind="valve" aria-pressed="false" disabled>
+              Open Valve
+            </button>
+          </div>
+
+          <!-- Cooling Tank Valve -->
+          <div class="maint-card" data-maint-card="cooling_valve">
+            <div class="maint-card-top">
+              <h3>Cooling Tank Valve</h3>
+              <span class="maint-state-pill" id="maint-status-cooling_valve">CLOSED</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="cooling_valve" data-maint-kind="valve" aria-pressed="false" disabled>
+              Open Valve
+            </button>
+          </div>
+
+          <!-- Heating Tank Water Pump -->
+          <div class="maint-card" data-maint-card="heating_pump">
+            <div class="maint-card-top">
+              <h3>Heating Tank Pump</h3>
+              <span class="maint-state-pill" id="maint-status-heating_pump">OFF</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="heating_pump" aria-pressed="false" disabled>
+              Turn ON
+            </button>
+          </div>
+
+          <!-- Cooling Tank Water Pump -->
+          <div class="maint-card" data-maint-card="cooling_pump">
+            <div class="maint-card-top">
+              <h3>Cooling Tank Pump</h3>
+              <span class="maint-state-pill" id="maint-status-cooling_pump">OFF</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="cooling_pump" aria-pressed="false" disabled>
+              Turn ON
+            </button>
+          </div>
+
+          <!-- Aerator Solenoid Valve 1 -->
+          <div class="maint-card" data-maint-card="aerator_valve_1">
+            <div class="maint-card-top">
+              <h3>Aerator Valve 1</h3>
+              <span class="maint-state-pill" id="maint-status-aerator_valve_1">CLOSED</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="aerator_valve_1" data-maint-kind="valve" aria-pressed="false" disabled>
+              Open Valve
+            </button>
+          </div>
+
+          <!-- Aerator Solenoid Valve 2 -->
+          <div class="maint-card" data-maint-card="aerator_valve_2">
+            <div class="maint-card-top">
+              <h3>Aerator Valve 2</h3>
+              <span class="maint-state-pill" id="maint-status-aerator_valve_2">CLOSED</span>
+            </div>
+            <button type="button" class="maint-toggle-btn" data-maint-component="aerator_valve_2" data-maint-kind="valve" aria-pressed="false" disabled>
+              Open Valve
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="maintenance-modal-footer">
+        <span class="maintenance-footer-note">Changes made in Maintenance Mode are isolated and automatically reverted on exit.</span>
+        <button type="button" id="maintenance-modal-done-btn" class="btn-modal-cancel">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Warning Alert Modal Overlay -->
   <div id="alert-modal-overlay" class="alert-modal-overlay" hidden aria-modal="true" role="dialog">
     <div class="alert-modal-card">
@@ -303,5 +466,6 @@
   <script src="{{ url_for('static', filename='js/sound.js') }}"></script>
   <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
   <script src="{{ url_for('static', filename='js/calibration.js') }}"></script>
+  <script src="{{ url_for('static', filename='js/maintenance.js') }}"></script>
 </body>
 </html>

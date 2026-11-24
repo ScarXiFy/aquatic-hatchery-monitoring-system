@@ -204,7 +204,7 @@ class TestMainValve(unittest.TestCase):
             mock_gpio.output.assert_any_call(26, mock_gpio.LOW)
 
     def test_rpi_stepper_motor_valves_control(self):
-        """Test RPi GPIO output for heating and cooling stepper valves (182 steps, CCW=open, CW=close)."""
+        """Test RPi GPIO output for heating and cooling stepper valves (178 steps, CCW=open, CW=close)."""
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
         mock_gpio.LOW = 0
@@ -218,40 +218,40 @@ class TestMainValve(unittest.TestCase):
              patch.object(piUtils, "CCW", 0), \
              patch("time.sleep", return_value=None):
 
-            # 1. Open Cooling Valve (CCW = 0, 182 pulses on pul=23, enable=25, dir=24)
+            # 1. Open Cooling Valve (CCW = 0, 178 pulses on pul=23, enable=25, dir=24)
             piUtils.setRpiCoolingValve(True)
             self.assertTrue(piUtils.coolingValveOpen)
             mock_gpio.output.assert_any_call(25, 0)   # enable LOW
             mock_gpio.output.assert_any_call(24, 0)   # dir CCW
             pul_23_calls = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(23, 1)]
-            self.assertEqual(len(pul_23_calls), 182)
+            self.assertEqual(len(pul_23_calls), 178)
 
-            # 2. Close Cooling Valve (CW = 1, 182 pulses on pul=23)
+            # 2. Close Cooling Valve (CW = 1, 178 pulses on pul=23)
             mock_gpio.reset_mock()
             piUtils.setRpiCoolingValve(False)
             self.assertFalse(piUtils.coolingValveOpen)
             mock_gpio.output.assert_any_call(25, 0)   # enable LOW
             mock_gpio.output.assert_any_call(24, 1)   # dir CW
             pul_23_close = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(23, 1)]
-            self.assertEqual(len(pul_23_close), 182)
+            self.assertEqual(len(pul_23_close), 178)
 
-            # 3. Open Heating Valve (CCW = 0, 182 pulses on pul=19, enable=6, dir=13)
+            # 3. Open Heating Valve (CCW = 0, 178 pulses on pul=19, enable=6, dir=13)
             mock_gpio.reset_mock()
             piUtils.setRpiHeatingValve(True)
             self.assertTrue(piUtils.heatingValveOpen)
             mock_gpio.output.assert_any_call(6, 0)    # enable LOW
             mock_gpio.output.assert_any_call(13, 0)   # dir CCW
             pul_19_calls = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(19, 1)]
-            self.assertEqual(len(pul_19_calls), 182)
+            self.assertEqual(len(pul_19_calls), 178)
 
-            # 4. Close Heating Valve (CW = 1, 182 pulses on pul=19)
+            # 4. Close Heating Valve (CW = 1, 178 pulses on pul=19)
             mock_gpio.reset_mock()
             piUtils.setRpiHeatingValve(False)
             self.assertFalse(piUtils.heatingValveOpen)
             mock_gpio.output.assert_any_call(6, 0)    # enable LOW
             mock_gpio.output.assert_any_call(13, 1)   # dir CW
             pul_19_close = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(19, 1)]
-            self.assertEqual(len(pul_19_close), 182)
+            self.assertEqual(len(pul_19_close), 178)
 
     def test_api_route_controls_main_valve(self):
         """Test POST /api/controls/valves/main endpoint."""

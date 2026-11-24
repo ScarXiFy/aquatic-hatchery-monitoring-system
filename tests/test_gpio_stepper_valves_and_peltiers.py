@@ -42,9 +42,9 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
         self.assertEqual(piUtils.coolValveDirPin, 24)
         self.assertEqual(piUtils.coolValvePulPin, 23)
 
-        # Stepper configuration: 182 steps
-        self.assertEqual(piUtils.VALVE_STEP_AMOUNT, 182)
-        self.assertEqual(piUtils.VALVE_STEPS, 182)
+        # Stepper configuration: 178 steps
+        self.assertEqual(piUtils.VALVE_STEP_AMOUNT, 178)
+        self.assertEqual(piUtils.VALVE_STEPS, 178)
 
         # Peltier pins: all 8
         expected_peltiers = {14, 15, 7, 1, 12, 16, 20, 21}
@@ -109,8 +109,8 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
     def test_cooling_valve_stepper_open_ccw_and_close_cw(self):
         """
         Verify cooling stepper motor valve:
-        - Opens with 182 steps CCW (counterclockwise)
-        - Closes with 182 steps CW (clockwise)
+        - Opens with 178 steps CCW (counterclockwise)
+        - Closes with 178 steps CW (clockwise)
         """
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
@@ -124,27 +124,27 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
              patch.object(piUtils, "CCW", 0), \
              patch("time.sleep", return_value=None):
 
-            # Open cooling valve (CCW, 182 steps)
+            # Open cooling valve (CCW, 178 steps)
             piUtils.setRpiCoolingValve(True)
             self.assertTrue(piUtils.coolingValveOpen)
             mock_gpio.output.assert_any_call(25, 0)  # enable pin LOW
             mock_gpio.output.assert_any_call(24, 0)  # dir pin CCW
             pulses_open = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(23, 1)]
-            self.assertEqual(len(pulses_open), 182)
+            self.assertEqual(len(pulses_open), 178)
 
             # Redundant open call should not step motor again
             mock_gpio.reset_mock()
             piUtils.setRpiCoolingValve(True)
             self.assertEqual(len(mock_gpio.output.call_args_list), 0)
 
-            # Close cooling valve (CW, 182 steps)
+            # Close cooling valve (CW, 178 steps)
             mock_gpio.reset_mock()
             piUtils.setRpiCoolingValve(False)
             self.assertFalse(piUtils.coolingValveOpen)
             mock_gpio.output.assert_any_call(25, 0)  # enable pin LOW
             mock_gpio.output.assert_any_call(24, 1)  # dir pin CW
             pulses_close = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(23, 1)]
-            self.assertEqual(len(pulses_close), 182)
+            self.assertEqual(len(pulses_close), 178)
 
             # Redundant close call should not step motor again
             mock_gpio.reset_mock()
@@ -154,8 +154,8 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
     def test_heating_valve_stepper_open_ccw_and_close_cw(self):
         """
         Verify heating stepper motor valve:
-        - Opens with 182 steps CCW (counterclockwise)
-        - Closes with 182 steps CW (clockwise)
+        - Opens with 178 steps CCW (counterclockwise)
+        - Closes with 178 steps CW (clockwise)
         """
         mock_gpio = MagicMock()
         mock_gpio.HIGH = 1
@@ -169,27 +169,27 @@ class TestGpioStepperValvesAndPeltiers(unittest.TestCase):
              patch.object(piUtils, "CCW", 0), \
              patch("time.sleep", return_value=None):
 
-            # Open heating valve (CCW, 182 steps)
+            # Open heating valve (CCW, 178 steps)
             piUtils.setRpiHeatingValve(True)
             self.assertTrue(piUtils.heatingValveOpen)
             mock_gpio.output.assert_any_call(6, 0)   # enable pin LOW
             mock_gpio.output.assert_any_call(13, 0)  # dir pin CCW
             pulses_open = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(19, 1)]
-            self.assertEqual(len(pulses_open), 182)
+            self.assertEqual(len(pulses_open), 178)
 
             # Redundant open call should not step motor again
             mock_gpio.reset_mock()
             piUtils.setRpiHeatingValve(True)
             self.assertEqual(len(mock_gpio.output.call_args_list), 0)
 
-            # Close heating valve (CW, 182 steps)
+            # Close heating valve (CW, 178 steps)
             mock_gpio.reset_mock()
             piUtils.setRpiHeatingValve(False)
             self.assertFalse(piUtils.heatingValveOpen)
             mock_gpio.output.assert_any_call(6, 0)   # enable pin LOW
             mock_gpio.output.assert_any_call(13, 1)  # dir pin CW
             pulses_close = [c for c in mock_gpio.output.call_args_list if c == unittest.mock.call(19, 1)]
-            self.assertEqual(len(pulses_close), 182)
+            self.assertEqual(len(pulses_close), 178)
 
             # Redundant close call should not step motor again
             mock_gpio.reset_mock()
