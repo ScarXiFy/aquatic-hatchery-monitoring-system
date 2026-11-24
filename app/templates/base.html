@@ -409,6 +409,28 @@
               Open Valve
             </button>
           </div>
+
+          <!-- Bleed Valve -->
+          <div class="maint-card maint-card-bleed" data-maint-card="bleed_valve">
+            <div class="maint-card-top">
+              <h3>Bleed Valve</h3>
+              <span class="maint-state-pill" id="maint-status-bleed_valve">0%</span>
+            </div>
+            <div class="maint-bleed-btn-group" role="group" aria-label="Bleed valve opening">
+              <button type="button" class="maint-toggle-btn maint-bleed-btn" data-maint-bleed-value="0" aria-pressed="true" disabled>
+                0%
+              </button>
+              <button type="button" class="maint-toggle-btn maint-bleed-btn" data-maint-bleed-value="33" aria-pressed="false" disabled>
+                33%
+              </button>
+              <button type="button" class="maint-toggle-btn maint-bleed-btn" data-maint-bleed-value="66" aria-pressed="false" disabled>
+                66%
+              </button>
+              <button type="button" class="maint-toggle-btn maint-bleed-btn" data-maint-bleed-value="100" aria-pressed="false" disabled>
+                100%
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 

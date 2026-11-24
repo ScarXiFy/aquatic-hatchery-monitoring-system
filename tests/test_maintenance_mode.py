@@ -21,6 +21,7 @@ class TestMaintenanceModeBackend(unittest.TestCase):
         piUtils.coolingSystemActive = True
         piUtils._dosvcounter = 1  # Valve 1 OPEN, Valve 2 CLOSED
         piUtils.doSolenoidValveOpen = True
+        piUtils.doBleedValvePercent = 33.0
         piUtils.aeratorFanActive = True
         piUtils.aeratorCoolerFanActive = True
         piUtils.heatingPumpActive = False
@@ -51,6 +52,7 @@ class TestMaintenanceModeBackend(unittest.TestCase):
                 "peltiers": True,
                 "aerator_valve_1": True,
                 "aerator_valve_2": False,
+                "bleed_valve": 33,
                 "heating_pump": False,
                 "cooling_pump": True,
                 "mixing_fan": True,
@@ -64,6 +66,7 @@ class TestMaintenanceModeBackend(unittest.TestCase):
         piUtils.set_maintenance_component("peltiers", False)
         piUtils.set_maintenance_component("aerator_valve_1", False)
         piUtils.set_maintenance_component("aerator_valve_2", True)
+        piUtils.set_maintenance_component("bleed_valve", 100)
         piUtils.set_maintenance_component("heating_pump", True)
         piUtils.set_maintenance_component("cooling_pump", False)
         piUtils.set_maintenance_component("mixing_fan", False)
@@ -82,11 +85,22 @@ class TestMaintenanceModeBackend(unittest.TestCase):
                 "peltiers": False,
                 "aerator_valve_1": False,
                 "aerator_valve_2": True,
+                "bleed_valve": 100,
                 "heating_pump": True,
                 "cooling_pump": False,
                 "mixing_fan": False,
             },
         )
+
+        # Test all discrete bleed valve positions: 0, 33, 66, 100
+        for opening in (0, 33, 66, 100):
+            bleed_state = piUtils.set_maintenance_component("bleed_valve", opening)
+            self.assertEqual(bleed_state["components"]["bleed_valve"], opening)
+
+        # Invalid bleed valve openings must raise ValueError
+        for invalid in (50, -1, 101, True, "abc"):
+            with self.assertRaises(ValueError):
+                piUtils.set_maintenance_component("bleed_valve", invalid)
 
         # Test "both" aerator solenoid valves open and close
         state_both_open = piUtils.set_maintenance_component("aerator_valves_both", True)
@@ -112,12 +126,14 @@ class TestMaintenanceModeBackend(unittest.TestCase):
                 "peltiers": True,
                 "aerator_valve_1": True,
                 "aerator_valve_2": False,
+                "bleed_valve": 33,
                 "heating_pump": False,
                 "cooling_pump": True,
                 "mixing_fan": True,
             },
         )
         self.assertEqual(piUtils._dosvcounter, 1)
+        self.assertEqual(piUtils.doBleedValvePercent, 33.0)
         self.assertTrue(piUtils.heaterActive)
         self.assertFalse(piUtils.heatingValveOpen)
         self.assertTrue(piUtils.coolingValveOpen)
@@ -151,10 +167,12 @@ class TestMaintenanceModeBackend(unittest.TestCase):
 
         with patch.object(piUtils, "isRpiPresent", True), \
              patch.object(piUtils, "GPIO", mock_gpio), \
-             patch.object(piUtils, "_step_valve_motor") as mock_step:
+             patch.object(piUtils, "_step_valve_motor") as mock_step, \
+             patch.object(piUtils, "_step_bleed_valve_motor") as mock_bleed_step:
             piUtils.enter_maintenance_mode()
             mock_gpio.output.reset_mock()
             mock_step.reset_mock()
+            mock_bleed_step.reset_mock()
 
             # Heater OFF (Active-HIGH -> LOW)
             piUtils.set_maintenance_component("heater", False)
@@ -191,10 +209,18 @@ class TestMaintenanceModeBackend(unittest.TestCase):
                 piUtils.VALVE_STEP_AMOUNT,
             )
 
-            # Exit maintenance mode -> steps heating valve back CW, does NOT step cooling valve (never moved),
-            # and restores all GPIO outputs to pre-maintenance state
+            # Bleed valve: starts at 33% (level 1) -> move to 100% (level 3): CCW 2 * STEPS_PER_POSITION;
+            # second call to 100% is a no-op
+            piUtils.set_maintenance_component("bleed_valve", 100)
+            piUtils.set_maintenance_component("bleed_valve", 100)
+            self.assertEqual(mock_bleed_step.call_count, 1)
+            mock_bleed_step.assert_called_with(piUtils.CCW, 2 * piUtils.STEPS_PER_POSITION)
+
+            # Exit maintenance mode -> steps heating valve back CW, steps bleed valve back CW to 33%,
+            # does NOT step cooling valve (never moved), and restores all GPIO outputs to pre-maintenance state
             mock_gpio.output.reset_mock()
             mock_step.reset_mock()
+            mock_bleed_step.reset_mock()
             piUtils.exit_maintenance_mode()
 
             self.assertEqual(mock_step.call_count, 1)
@@ -205,6 +231,8 @@ class TestMaintenanceModeBackend(unittest.TestCase):
                 piUtils.CW,
                 piUtils.VALVE_STEP_AMOUNT,
             )
+            self.assertEqual(mock_bleed_step.call_count, 1)
+            mock_bleed_step.assert_called_with(piUtils.CW, 2 * piUtils.STEPS_PER_POSITION)
             mock_gpio.output.assert_any_call(piUtils.heatingSystemPin, mock_gpio.HIGH)
             for pin in piUtils.PELTIER_PINS:
                 mock_gpio.output.assert_any_call(pin, mock_gpio.LOW)
@@ -218,6 +246,48 @@ class TestMaintenanceModeBackend(unittest.TestCase):
         piUtils.enter_maintenance_mode()
         with self.assertRaises(ValueError):
             piUtils.set_maintenance_component("flux_capacitor", True)
+
+    def test_bleed_valve_uses_absolute_target_positions_not_relative_stacking(self):
+        """
+        Starting at 0%, pressing 33 then 66 must move by delta (0->33 = +1 pos, 33->66 = +1 pos)
+        for a total of 2 positions (66%), NOT stacking 1 + 2 = 3 positions (99%/100%).
+        """
+        mock_gpio = MagicMock()
+        mock_gpio.HIGH = 1
+        mock_gpio.LOW = 0
+        piUtils.doBleedValvePercent = 0.0
+
+        with patch.object(piUtils, "isRpiPresent", True), \
+             patch.object(piUtils, "GPIO", mock_gpio), \
+             patch.object(piUtils, "_step_bleed_valve_motor") as mock_bleed_step:
+            piUtils.enter_maintenance_mode()
+            self.assertEqual(piUtils.get_maintenance_state()["components"]["bleed_valve"], 0)
+
+            # 0% (level 0) -> 33% (level 1): moves +1 position (200 steps CCW)
+            piUtils.set_maintenance_component("bleed_valve", 33)
+            mock_bleed_step.assert_called_once_with(piUtils.CCW, 1 * piUtils.STEPS_PER_POSITION)
+            self.assertEqual(piUtils.get_maintenance_state()["components"]["bleed_valve"], 33)
+
+            # 33% (level 1) -> 66% (level 2): moves ONLY +1 position (200 steps CCW), NOT +2 (400 steps)
+            mock_bleed_step.reset_mock()
+            piUtils.set_maintenance_component("bleed_valve", 66)
+            mock_bleed_step.assert_called_once_with(piUtils.CCW, 1 * piUtils.STEPS_PER_POSITION)
+            self.assertEqual(piUtils.get_maintenance_state()["components"]["bleed_valve"], 66)
+
+            # Pressing 66% again is a no-op (0 steps)
+            mock_bleed_step.reset_mock()
+            piUtils.set_maintenance_component("bleed_valve", 66)
+            mock_bleed_step.assert_not_called()
+
+            # 66% (level 2) -> 33% (level 1): moves -1 position (200 steps CW)
+            piUtils.set_maintenance_component("bleed_valve", 33)
+            mock_bleed_step.assert_called_once_with(piUtils.CW, 1 * piUtils.STEPS_PER_POSITION)
+
+            # Exit maintenance mode: reverts 33% (level 1) -> 0% (level 0): moves -1 position (200 steps CW)
+            mock_bleed_step.reset_mock()
+            piUtils.exit_maintenance_mode()
+            mock_bleed_step.assert_called_once_with(piUtils.CW, 1 * piUtils.STEPS_PER_POSITION)
+            self.assertEqual(piUtils.doBleedValvePercent, 0.0)
 
 
 class TestMaintenanceModeAPIAndUI(unittest.TestCase):
@@ -268,6 +338,22 @@ class TestMaintenanceModeAPIAndUI(unittest.TestCase):
         self.assertFalse(res_both.get_json()["components"]["aerator_valve_1"])
         self.assertFalse(res_both.get_json()["components"]["aerator_valve_2"])
 
+        # Set bleed valve opening via API (0, 33, 66, 100)
+        for opening in (0, 33, 66, 100):
+            res_bleed = self.client.post(
+                "/api/maintenance/component",
+                json={"component": "bleed_valve", "state": opening},
+            )
+            self.assertEqual(res_bleed.status_code, 200)
+            self.assertEqual(res_bleed.get_json()["components"]["bleed_valve"], opening)
+
+        # Invalid bleed valve opening returns 400
+        res_bleed_bad = self.client.post(
+            "/api/maintenance/component",
+            json={"component": "bleed_valve", "state": 50},
+        )
+        self.assertEqual(res_bleed_bad.status_code, 400)
+
         # Unknown component returns 400
         res_bad = self.client.post(
             "/api/maintenance/component",
@@ -298,6 +384,12 @@ class TestMaintenanceModeAPIAndUI(unittest.TestCase):
             'data-maint-component="mixing_fan"',
             'data-maint-component="aerator_valve_1"',
             'data-maint-component="aerator_valve_2"',
+            'data-maint-card="bleed_valve"',
+            'id="maint-status-bleed_valve"',
+            'data-maint-bleed-value="0"',
+            'data-maint-bleed-value="33"',
+            'data-maint-bleed-value="66"',
+            'data-maint-bleed-value="100"',
             "Normal Mode Active",
             "js/maintenance.js",
         ]

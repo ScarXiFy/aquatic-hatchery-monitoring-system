@@ -175,18 +175,61 @@ class TestHeatingTankAndPumps(unittest.TestCase):
             piUtils.COOLING_PUMP_RUN_DURATION = orig_duration
 
     # -------------------------------------------------------------------------
-    # 3. SENSOR-BASED HEATER & SETPOINT-LOWERED COOLDOWN PUMP LOGIC
+    # 3. SENSOR-BASED HEATER & SETPOINT-LOWERED COOLDOWN PUMP LOGIC (3-READING VERIFICATION)
     # -------------------------------------------------------------------------
+    def test_heating_tank_heater_requires_three_consecutive_low_readings(self):
+        """
+        Heater relay must NOT activate on 1 or 2 low readings; it must wait for
+        3 consecutive readings below setpoint, and fluctuations back >= setpoint reset the counter.
+        """
+        # Reading 1: 35.0 < 40.0 -> NOT active yet
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        self.assertEqual(piUtils._heating_tank_consecutive_low, 1)
+
+        # Reading 2: 36.0 < 40.0 -> NOT active yet
+        piUtils.applyHeatingTankControl(heating_tank_temp=36.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        self.assertEqual(piUtils._heating_tank_consecutive_low, 2)
+
+        # Fluctuation >= setpoint -> resets counter to 0, stays OFF
+        piUtils.applyHeatingTankControl(heating_tank_temp=40.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        self.assertEqual(piUtils._heating_tank_consecutive_low, 0)
+
+        # 3 consecutive low readings -> activates heater on the 3rd reading
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.5, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        piUtils.applyHeatingTankControl(heating_tank_temp=36.0, setpoint=40.0)
+        self.assertTrue(piUtils.heaterActive)
+
     def test_heating_tank_overtemp_after_setpoint_change_activates_pump_until_met(self):
         """
         When the heating tank setpoint has just been set and the heating tank sensor detects
-        that the current temperature is too high (> setpoint), the heating tank water pump
-        must activate until the setpoint is met (<= setpoint), while the heater stays OFF.
+        that the current temperature is too high (> setpoint) for 3 consecutive readings,
+        the heating tank water pump must activate until the setpoint is met (<= setpoint),
+        while the heater stays OFF.
         """
         # User sets desired heating tank temperature to 35C while tank is currently at 45C
         piUtils.set_heating_tank_setpoint(35.0)
-        piUtils.applyHeatingTankControl(heating_tank_temp=45.0, setpoint=35.0)
 
+        # Readings 1 & 2: must NOT activate pump yet
+        piUtils.applyHeatingTankControl(heating_tank_temp=45.0, setpoint=35.0)
+        self.assertFalse(piUtils.heaterActive)
+        self.assertFalse(piUtils.heatingPumpActive)
+        self.assertFalse(piUtils._heating_pump_cooldown_active)
+        self.assertEqual(piUtils._heating_tank_consecutive_high, 1)
+
+        piUtils.applyHeatingTankControl(heating_tank_temp=44.8, setpoint=35.0)
+        self.assertFalse(piUtils.heaterActive)
+        self.assertFalse(piUtils.heatingPumpActive)
+        self.assertFalse(piUtils._heating_pump_cooldown_active)
+        self.assertEqual(piUtils._heating_tank_consecutive_high, 2)
+
+        # Reading 3: 3rd consecutive high reading activates pump!
+        piUtils.applyHeatingTankControl(heating_tank_temp=44.5, setpoint=35.0)
         self.assertFalse(piUtils.heaterActive)
         self.assertTrue(piUtils.heatingPumpActive)
         self.assertTrue(piUtils._heating_pump_cooldown_active)
@@ -203,12 +246,29 @@ class TestHeatingTankAndPumps(unittest.TestCase):
         self.assertFalse(piUtils.heatingPumpActive)
         self.assertFalse(piUtils._heating_pump_cooldown_active)
 
+    def test_heating_tank_overtemp_fluctuation_cancels_pump_activation(self):
+        """
+        If the heating tank temperature drops to <= setpoint before 3 consecutive
+        high readings after a setpoint change, the cooldown pump must NOT activate.
+        """
+        piUtils.set_heating_tank_setpoint(35.0)
+        piUtils.applyHeatingTankControl(heating_tank_temp=42.0, setpoint=35.0)
+        piUtils.applyHeatingTankControl(heating_tank_temp=41.5, setpoint=35.0)
+        self.assertFalse(piUtils.heatingPumpActive)
+
+        # Reading 3 drops to setpoint -> resets counter and clears just-set flag
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=35.0)
+        self.assertFalse(piUtils.heatingPumpActive)
+        self.assertFalse(piUtils._heating_pump_cooldown_active)
+        self.assertEqual(piUtils._heating_tank_consecutive_high, 0)
+
     def test_heating_tank_overshoot_without_recent_setpoint_change_does_not_activate_pump(self):
         """
-        If the setpoint was NOT just set, a slight temperature above setpoint simply turns
+        If the setpoint was NOT just set, temperatures above setpoint simply turn
         the heater OFF without triggering the cooldown water pump.
         """
-        piUtils.applyHeatingTankControl(heating_tank_temp=41.0, setpoint=40.0)
+        for _ in range(3):
+            piUtils.applyHeatingTankControl(heating_tank_temp=41.0, setpoint=40.0)
         self.assertFalse(piUtils.heaterActive)
         self.assertFalse(piUtils.heatingPumpActive)
         self.assertFalse(piUtils._heating_pump_cooldown_active)
@@ -216,18 +276,29 @@ class TestHeatingTankAndPumps(unittest.TestCase):
     def test_raising_setpoint_during_cooldown_stops_pump_and_activates_heater(self):
         """
         If the heating tank is cooling down via the water pump and the user raises the
-        setpoint above the current temperature, the pump stops and the heater activates.
+        setpoint above the current temperature, the pump stops immediately and the heater
+        activates after 3 consecutive readings below the new setpoint.
         """
         piUtils.set_heating_tank_setpoint(35.0)
-        piUtils.applyHeatingTankControl(heating_tank_temp=45.0, setpoint=35.0)
+        for _ in range(3):
+            piUtils.applyHeatingTankControl(heating_tank_temp=45.0, setpoint=35.0)
         self.assertTrue(piUtils.heatingPumpActive)
         self.assertFalse(piUtils.heaterActive)
 
         # User raises setpoint to 40C (max) while tank is at 38C
         piUtils.set_heating_tank_setpoint(40.0)
+        # Reading 1: cooldown pump stops immediately, heater waits for 3 consecutive low readings
         piUtils.applyHeatingTankControl(heating_tank_temp=38.0, setpoint=40.0)
         self.assertFalse(piUtils.heatingPumpActive)
         self.assertFalse(piUtils._heating_pump_cooldown_active)
+        self.assertFalse(piUtils.heaterActive)
+
+        # Reading 2: still waiting
+        piUtils.applyHeatingTankControl(heating_tank_temp=38.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+
+        # Reading 3: heater activates
+        piUtils.applyHeatingTankControl(heating_tank_temp=38.0, setpoint=40.0)
         self.assertTrue(piUtils.heaterActive)
 
     # -------------------------------------------------------------------------
@@ -262,8 +333,9 @@ class TestHeatingTankAndPumps(unittest.TestCase):
         self.assertEqual(piUtils.heatingTankSetpoint, 34.0)
         self.assertTrue(piUtils._heating_tank_setpoint_just_set)
 
-        # Now sensor reads 39.0C (> 34.0C) -> heating tank water pump activates
-        piUtils.applyHeatingTankControl(heating_tank_temp=39.0, setpoint=34.0)
+        # Now sensor reads 39.0C (> 34.0C) for 3 consecutive readings -> heating tank water pump activates
+        for _ in range(3):
+            piUtils.applyHeatingTankControl(heating_tank_temp=39.0, setpoint=34.0)
         self.assertTrue(piUtils.heatingPumpActive)
         self.assertFalse(piUtils.heaterActive)
 

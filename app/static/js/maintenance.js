@@ -8,6 +8,7 @@
       peltiers: false,
       aerator_valve_1: true,
       aerator_valve_2: true,
+      bleed_valve: 0,
       heating_pump: false,
       cooling_pump: false,
       mixing_fan: false,
@@ -111,6 +112,23 @@
         }
       }
     });
+
+    // Update Bleed Valve panel (0%, 33%, 66%, 100%)
+    const bleedVal = Number.isFinite(Number(components.bleed_valve))
+      ? Math.round(Number(components.bleed_valve))
+      : 0;
+    const bleedPill = getEl("maint-status-bleed_valve");
+    if (bleedPill) {
+      bleedPill.textContent = `${bleedVal}%`;
+      bleedPill.classList.toggle("is-on", bleedVal > 0);
+    }
+    document.querySelectorAll("[data-maint-bleed-value]").forEach((btn) => {
+      const btnVal = Number(btn.getAttribute("data-maint-bleed-value"));
+      const isSelected = btnVal === bleedVal;
+      btn.disabled = !isActive || requestInFlight;
+      btn.setAttribute("aria-pressed", String(isSelected));
+      btn.classList.toggle("is-on", isSelected);
+    });
   }
 
   function applyState(nextState) {
@@ -162,11 +180,13 @@
     requestInFlight = true;
     renderState();
 
+    const payloadState = component === "bleed_valve" ? Number(state) : Boolean(state);
+
     try {
       const res = await fetch("/api/maintenance/component", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ component, state: Boolean(state) }),
+        body: JSON.stringify({ component, state: payloadState }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -242,6 +262,15 @@
         if (!component || !maintenanceState.active) return;
         const current = Boolean(maintenanceState.components[component]);
         setComponentState(component, !current);
+      });
+    });
+
+    document.querySelectorAll("[data-maint-bleed-value]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!maintenanceState.active) return;
+        const opening = Number(btn.getAttribute("data-maint-bleed-value"));
+        if (!Number.isFinite(opening)) return;
+        setComponentState("bleed_valve", opening);
       });
     });
 

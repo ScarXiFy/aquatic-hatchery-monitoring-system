@@ -135,9 +135,13 @@ class TestMixerAndHeating(unittest.TestCase):
     def test_heater_sensor_based_activation_and_deactivation(self):
         """
         Test sensor-based heater control (replaces timed pulse intervals):
-        1. When heating tank sensor temp < setpoint, heater relay activates to add heat.
+        1. When heating tank sensor temp < setpoint for 3 consecutive readings, heater relay activates to add heat.
         2. When heating tank sensor temp >= setpoint, heater relay deactivates to cool down.
         """
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
         piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
         self.assertTrue(piUtils.heaterActive)
 
@@ -152,7 +156,8 @@ class TestMixerAndHeating(unittest.TestCase):
 
     def test_heater_stays_off_when_heating_tank_sensor_unavailable(self):
         """Test that if heating tank sensor returns None, heater relay is safely turned OFF."""
-        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        for _ in range(3):
+            piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
         self.assertTrue(piUtils.heaterActive)
 
         piUtils.applyHeatingTankControl(heating_tank_temp=None, setpoint=40.0)

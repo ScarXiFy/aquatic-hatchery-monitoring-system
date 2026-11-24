@@ -1089,6 +1089,8 @@ _last_do_trig_time = 0.0
 TEMP_CONSECUTIVE_REQUIRED = 3
 _temp_consecutive_high = 0
 _temp_consecutive_low = 0
+_heating_tank_consecutive_low = 0
+_heating_tank_consecutive_high = 0
 
 MIXING_TANK_TEMP_LIMIT = 1.0  # Limit (C) above setpoint for heating or below setpoint for cooling
 _heating_disabled_by_mixing = False
@@ -1102,12 +1104,15 @@ _mix_consecutive_cool_enable = 0
 def reset_temperature_control_state():
     """Reset consecutive reading counters for temperature threshold debouncing, mixing tank control, and heating tank pump state."""
     global _temp_consecutive_high, _temp_consecutive_low
+    global _heating_tank_consecutive_low, _heating_tank_consecutive_high
     global _heating_disabled_by_mixing, _cooling_disabled_by_mixing
     global _mix_consecutive_heat_disable, _mix_consecutive_heat_enable
     global _mix_consecutive_cool_disable, _mix_consecutive_cool_enable
     global _heating_tank_setpoint_just_set, _heating_pump_cooldown_active
     _temp_consecutive_high = 0
     _temp_consecutive_low = 0
+    _heating_tank_consecutive_low = 0
+    _heating_tank_consecutive_high = 0
     _heating_disabled_by_mixing = False
     _cooling_disabled_by_mixing = False
     _mix_consecutive_heat_disable = 0
@@ -1124,16 +1129,19 @@ def set_heating_tank_setpoint(setpoint: float):
     Record a newly configured heating tank temperature setpoint from the web app slider.
     Clamps within [HEATING_TANK_MIN_SETPOINT (27C), HEATING_TANK_MAX_SETPOINT (40C)] and
     marks the setpoint as just set so that if the heating tank sensor detects that the
-    current heating tank temperature is too high, the heating tank water pump will activate
-    until the setpoint is met.
+    current heating tank temperature is too high (verified over 3 consecutive readings),
+    the heating tank water pump will activate until the setpoint is met.
     """
     global heatingTankSetpoint, _heating_tank_setpoint_just_set
+    global _heating_tank_consecutive_low, _heating_tank_consecutive_high
     try:
         val = float(setpoint)
     except (TypeError, ValueError):
         return
     heatingTankSetpoint = max(HEATING_TANK_MIN_SETPOINT, min(HEATING_TANK_MAX_SETPOINT, val))
     _heating_tank_setpoint_just_set = True
+    _heating_tank_consecutive_low = 0
+    _heating_tank_consecutive_high = 0
     print(f"[CONTROL] Heating tank setpoint updated -> {heatingTankSetpoint:.2f}C")
 
 
@@ -1141,21 +1149,24 @@ def applyHeatingTankControl(
     heating_tank_temp: float,
     setpoint: float = None,
     tolerance: float = HEATING_TANK_TEMP_TOLERANCE,
+    consecutive_required: int = TEMP_CONSECUTIVE_REQUIRED,
 ):
     """
     Sensor-based heater and heating tank water pump control:
     - Compares the heating tank temperature sensor reading against the user-configured
       heating tank temperature setpoint.
     - If heating_tank_temp < setpoint - tolerance:
-        Activates heater relay to add more heat (and stops any cooldown pump override).
+        Waits for 3 consecutive readings before activating heater relay to add more heat
+        (and stops any cooldown pump override).
     - If heating_tank_temp >= setpoint:
-        Deactivates heater relay to cool down.
+        Deactivates heater relay to cool down and resets consecutive low counter.
     - Additional logic for setpoint change:
         When the setpoint has just been set and the heating tank sensor detects that the
-        current heating tank temperature is too high (> setpoint), activates the heating
-        tank water pump until the heating tank temperature drops to <= setpoint.
+        current heating tank temperature is too high (> setpoint) for 3 consecutive readings,
+        activates the heating tank water pump until the heating tank temperature drops to <= setpoint.
     """
     global heatingTankSetpoint, _heating_tank_setpoint_just_set, _heating_pump_cooldown_active
+    global _heating_tank_consecutive_low, _heating_tank_consecutive_high
 
     if maintenanceModeActive:
         return
@@ -1169,27 +1180,41 @@ def applyHeatingTankControl(
     target = float(heatingTankSetpoint)
 
     if heating_tank_temp is None:
-        # Safety: if heating tank sensor cannot be read, keep heater OFF
+        # Safety: if heating tank sensor cannot be read, reset counters and keep heater OFF
+        _heating_tank_consecutive_low = 0
+        _heating_tank_consecutive_high = 0
         _set_heater_relay(False)
         return
 
     temp_val = round(float(heating_tank_temp), 4)
+    target_rounded = round(target, 4)
     low_threshold = round(target - float(tolerance), 4)
 
     if temp_val < low_threshold:
+        _heating_tank_consecutive_low += 1
+        _heating_tank_consecutive_high = 0
         _heating_tank_setpoint_just_set = False
         if _heating_pump_cooldown_active:
             with _pump_lock:
                 _heating_pump_cooldown_active = False
                 if _heating_pump_stop_timer is None:
                     heatingPump(False)
-        if not heaterActive:
+        if _heating_tank_consecutive_low >= consecutive_required or heaterActive:
+            if not heaterActive:
+                print(
+                    f"[CONTROL] Heating tank temp LOW ({temp_val}C < {low_threshold}C, setpoint {target}C) "
+                    f"[reading {_heating_tank_consecutive_low}/{consecutive_required}] - activating heater"
+                )
+            _set_heater_relay(True)
+        else:
             print(
-                f"[CONTROL] Heating tank temp LOW ({temp_val}C < {low_threshold}C, setpoint {target}C) - activating heater"
+                f"[CONTROL] Heating tank temp LOW ({temp_val}C < {low_threshold}C, setpoint {target}C) "
+                f"[reading {_heating_tank_consecutive_low}/{consecutive_required}] - "
+                f"waiting for {consecutive_required} consecutive readings before activating heater"
             )
-        _set_heater_relay(True)
     else:
-        if temp_val >= round(target, 4):
+        _heating_tank_consecutive_low = 0
+        if temp_val >= target_rounded:
             if heaterActive:
                 print(
                     f"[CONTROL] Heating tank temp AT/ABOVE setpoint ({temp_val}C >= {target}C) - deactivating heater"
@@ -1197,16 +1222,39 @@ def applyHeatingTankControl(
             _set_heater_relay(False)
 
         if _heating_tank_setpoint_just_set:
-            _heating_tank_setpoint_just_set = False
-            if temp_val > round(target, 4):
-                with _pump_lock:
-                    _heating_pump_cooldown_active = True
-                    heatingPump(True)
-                print(
-                    f"[CONTROL] Heating tank temp TOO HIGH after setpoint change ({temp_val}C > {target}C) - activating heating tank water pump until setpoint is met"
-                )
+            if temp_val > target_rounded:
+                _heating_tank_consecutive_high += 1
+                if _heating_tank_consecutive_high >= consecutive_required:
+                    _heating_tank_setpoint_just_set = False
+                    _heating_tank_consecutive_high = 0
+                    with _pump_lock:
+                        _heating_pump_cooldown_active = True
+                        heatingPump(True)
+                    print(
+                        f"[CONTROL] Heating tank temp TOO HIGH after setpoint change ({temp_val}C > {target}C) "
+                        f"[reading {consecutive_required}/{consecutive_required}] - "
+                        f"activating heating tank water pump until setpoint is met"
+                    )
+                else:
+                    print(
+                        f"[CONTROL] Heating tank temp TOO HIGH after setpoint change ({temp_val}C > {target}C) "
+                        f"[reading {_heating_tank_consecutive_high}/{consecutive_required}] - "
+                        f"waiting for {consecutive_required} consecutive readings before activating heating tank water pump"
+                    )
+            else:
+                _heating_tank_consecutive_high = 0
+                _heating_tank_setpoint_just_set = False
+                if _heating_pump_cooldown_active:
+                    with _pump_lock:
+                        _heating_pump_cooldown_active = False
+                        if _heating_pump_stop_timer is None:
+                            heatingPump(False)
+                    print(
+                        f"[CONTROL] Heating tank setpoint met ({temp_val}C <= {target}C) - deactivating heating tank water pump"
+                    )
         elif _heating_pump_cooldown_active:
-            if temp_val <= round(target, 4):
+            _heating_tank_consecutive_high = 0
+            if temp_val <= target_rounded:
                 with _pump_lock:
                     _heating_pump_cooldown_active = False
                     if _heating_pump_stop_timer is None:
@@ -1218,6 +1266,8 @@ def applyHeatingTankControl(
                 with _pump_lock:
                     if not heatingPumpActive:
                         heatingPump(True)
+        else:
+            _heating_tank_consecutive_high = 0
 
 
 def applyTemperatureControl(
@@ -1661,10 +1711,56 @@ _maintenance_components = {
     "peltiers": False,
     "aerator_valve_1": True,
     "aerator_valve_2": True,
+    "bleed_valve": 0,
     "heating_pump": False,
     "cooling_pump": False,
     "mixing_fan": False,
 }
+
+
+def _nearest_bleed_valve_level(percent: float) -> int:
+    """Map a percentage (0..100) to the nearest index in BLEED_VALVE_POSITIONS."""
+    clamped = max(0.0, min(100.0, float(percent)))
+    return min(
+        range(len(BLEED_VALVE_POSITIONS)),
+        key=lambda i: abs(BLEED_VALVE_POSITIONS[i] - clamped),
+    )
+
+
+def _validate_bleed_valve_opening(value) -> tuple[int, int]:
+    """
+    Validate a discrete bleed valve opening (0, 33, 66, or 100).
+    Returns (level_index, opening_int). Raises ValueError for invalid values.
+    """
+    if isinstance(value, bool):
+        raise ValueError("Bleed valve opening must be one of 0, 33, 66, 100")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Bleed valve opening must be one of 0, 33, 66, 100") from exc
+
+    for idx, pos in enumerate(BLEED_VALVE_POSITIONS):
+        if abs(numeric - pos) < 1e-6:
+            return idx, int(round(pos))
+    raise ValueError("Bleed valve opening must be one of 0, 33, 66, 100")
+
+
+def _step_bleed_valve_motor(direction, total_steps: int):
+    """Step the bleed valve stepper motor driver by total_steps in the given direction."""
+    if not (isRpiPresent and GPIO is not None):
+        return
+    with _valve_motor_lock:
+        try:
+            GPIO.output(bleedValveEnablePin, GPIO.LOW)
+            GPIO.output(bleedValveDirPin, direction)
+            for _ in range(total_steps):
+                GPIO.output(bleedValveStepPin, GPIO.HIGH)
+                time.sleep(STEP_DELAY)
+                GPIO.output(bleedValveStepPin, GPIO.LOW)
+                time.sleep(STEP_DELAY)
+        except Exception as e:
+            logging.error(f"[RPI] GPIO failure during maintenance bleed valve movement: {e}")
+            print(f"[RPI] GPIO failure during maintenance bleed valve movement: {e}")
 
 
 def is_maintenance_mode() -> bool:
@@ -1674,6 +1770,7 @@ def is_maintenance_mode() -> bool:
 
 def _current_normal_component_states() -> dict:
     """Read the current normal-mode hardware states for all maintenance-controllable components."""
+    bleed_level = _nearest_bleed_valve_level(doBleedValvePercent)
     return {
         "heater": bool(heaterActive),
         "heating_valve": bool(heatingValveOpen),
@@ -1681,6 +1778,7 @@ def _current_normal_component_states() -> dict:
         "peltiers": bool(coolingSystemActive),
         "aerator_valve_1": bool(_dosvcounter >= 1),
         "aerator_valve_2": bool(_dosvcounter >= 2),
+        "bleed_valve": int(round(BLEED_VALVE_POSITIONS[bleed_level])),
         "heating_pump": bool(heatingPumpActive),
         "cooling_pump": bool(coolingPumpActive),
         "mixing_fan": bool(mixerActive),
@@ -1811,6 +1909,32 @@ def _apply_maintenance_mixing_fan(active: bool):
         print(f"[MAINTENANCE][DUMMY] mixing fan -> {'ON' if state else 'OFF'}")
 
 
+def _apply_maintenance_bleed_valve(target_percent):
+    target_level, target_opening = _validate_bleed_valve_opening(target_percent)
+    current_level = _nearest_bleed_valve_level(_maintenance_components.get("bleed_valve", 0))
+    if current_level == target_level:
+        _maintenance_components["bleed_valve"] = target_opening
+        return
+
+    level_diff = target_level - current_level
+    direction = CCW if level_diff > 0 else CW
+    total_steps = abs(level_diff) * STEPS_PER_POSITION
+    direction_str = "CCW" if level_diff > 0 else "CW"
+
+    if isRpiPresent and GPIO is not None:
+        print(f"[MAINTENANCE][RPI] bleed valve stepper -> {target_opening}% ({direction_str}, {total_steps} steps)")
+        _step_bleed_valve_motor(direction, total_steps)
+    else:
+        print(f"[MAINTENANCE][DUMMY] bleed valve stepper -> {target_opening}% ({direction_str}, {total_steps} steps)")
+
+    _maintenance_components["bleed_valve"] = target_opening
+    try:
+        from app.models import save_motor_state
+        save_motor_state("bleed_valve", target_level)
+    except Exception:
+        pass
+
+
 def enter_maintenance_mode() -> dict:
     """
     Enter isolated maintenance mode:
@@ -1848,6 +1972,7 @@ def enter_maintenance_mode() -> dict:
             "mixingFanActive": bool(mixingFanActive),
             "dosvcounter": int(_dosvcounter),
             "doSolenoidValveOpen": bool(doSolenoidValveOpen),
+            "doBleedValvePercent": float(doBleedValvePercent),
             "aeratorFanActive": bool(aeratorFanActive),
             "last_temp_system": last_temp_system,
             "_heating_disabled_by_mixing": bool(_heating_disabled_by_mixing),
@@ -1871,7 +1996,7 @@ def exit_maintenance_mode() -> dict:
     global heatingSystemActive, coolingSystemActive, heaterActive
     global heatingValveOpen, coolingValveOpen
     global heatingPumpActive, coolingPumpActive, mixerActive, mixingFanActive
-    global _dosvcounter, doSolenoidValveOpen, aeratorFanActive, aeratorCoolerFanActive
+    global _dosvcounter, doSolenoidValveOpen, doBleedValvePercent, aeratorFanActive, aeratorCoolerFanActive
     global last_temp_system, _heating_disabled_by_mixing, _cooling_disabled_by_mixing
     global _heating_pump_cooldown_active
 
@@ -1885,6 +2010,7 @@ def exit_maintenance_mode() -> dict:
         # 1. Revert stepper valves physically ONLY if their physical position changed
         _apply_maintenance_heating_valve(saved["heating_valve"])
         _apply_maintenance_cooling_valve(saved["cooling_valve"])
+        _apply_maintenance_bleed_valve(saved.get("bleed_valve", 0))
 
         # 2. Revert heater relay
         _apply_maintenance_heater(saved["heater"])
@@ -1915,6 +2041,7 @@ def exit_maintenance_mode() -> dict:
         mixingFanActive = snapshot.get("mixingFanActive", saved["mixing_fan"])
         _dosvcounter = snapshot.get("dosvcounter", _dosvcounter)
         doSolenoidValveOpen = snapshot.get("doSolenoidValveOpen", _dosvcounter > 0)
+        doBleedValvePercent = float(snapshot.get("doBleedValvePercent", saved.get("bleed_valve", 0)))
         aeratorFanActive = snapshot.get("aeratorFanActive", _dosvcounter > 0)
         aeratorCoolerFanActive = aeratorFanActive
         last_temp_system = snapshot.get("last_temp_system", last_temp_system)
@@ -1928,7 +2055,7 @@ def exit_maintenance_mode() -> dict:
         return get_maintenance_state()
 
 
-def set_maintenance_component(component: str, state: bool) -> dict:
+def set_maintenance_component(component: str, state) -> dict:
     """
     Manually control an individual hardware component while in maintenance mode.
     Supported components:
@@ -1939,6 +2066,7 @@ def set_maintenance_component(component: str, state: bool) -> dict:
       - 'aerator_valve_1'   : OPEN (True) / CLOSED (False) for 1st aerator solenoid valve
       - 'aerator_valve_2'   : OPEN (True) / CLOSED (False) for 2nd aerator solenoid valve
       - 'aerator_valves_both': OPEN (True) / CLOSED (False) for both aerator solenoid valves
+      - 'bleed_valve'       : discrete opening percentage (0, 33, 66, or 100)
       - 'heating_pump'      : ON (True) / OFF (False) for heating tank water pump
       - 'cooling_pump'      : ON (True) / OFF (False) for cooling tank water pump
       - 'mixing_fan'        : ON (True) / OFF (False) for mixing fan
@@ -1946,6 +2074,10 @@ def set_maintenance_component(component: str, state: bool) -> dict:
     with _maintenance_lock:
         if not maintenanceModeActive:
             raise RuntimeError("Maintenance mode is not active")
+
+        if component == "bleed_valve":
+            _apply_maintenance_bleed_valve(state)
+            return get_maintenance_state()
 
         desired = bool(state)
         if component == "heater":

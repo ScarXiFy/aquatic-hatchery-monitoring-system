@@ -460,17 +460,28 @@ def set_maintenance_component_route():
     if not component or not isinstance(component, str):
         return jsonify({"error": "component is required"}), 400
 
-    if "state" in payload:
-        desired = bool(payload["state"])
-    elif "open" in payload:
-        desired = bool(payload["open"])
-    elif "active" in payload:
-        desired = bool(payload["active"])
+    comp_name = component.strip()
+    if comp_name == "bleed_valve":
+        raw_val = None
+        for key in ("state", "percent", "opening", "position", "value"):
+            if key in payload:
+                raw_val = payload[key]
+                break
+        if raw_val is None or isinstance(raw_val, bool):
+            return jsonify({"error": "bleed_valve opening must be one of 0, 33, 66, 100"}), 400
+        desired = raw_val
     else:
-        return jsonify({"error": "state boolean is required"}), 400
+        if "state" in payload:
+            desired = bool(payload["state"])
+        elif "open" in payload:
+            desired = bool(payload["open"])
+        elif "active" in payload:
+            desired = bool(payload["active"])
+        else:
+            return jsonify({"error": "state boolean is required"}), 400
 
     try:
-        state = piUtils.set_maintenance_component(component.strip(), desired)
+        state = piUtils.set_maintenance_component(comp_name, desired)
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 409
     except ValueError as e:
