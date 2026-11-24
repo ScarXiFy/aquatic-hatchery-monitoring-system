@@ -13,6 +13,7 @@ if str(BASE_DIR) not in sys.path:
 
 from app.models import (
     DEFAULT_CALIBRATIONS,
+    SALINITY_TEMP_ALPHA,
     SENSOR_TABLE_MAP,
     SENSOR_NORMALIZATION,
     ensure_default_calibrations,
@@ -21,6 +22,7 @@ from app.models import (
     add_sensor_calibration,
     get_calibration_history,
     apply_calibration,
+    normalize_salinity_voltage_to_25c,
     create_sensor_reading,
     get_latest_reading,
     get_history,
@@ -68,13 +70,14 @@ class TestCalibrationBackend(unittest.TestCase):
         # Verify new reference table exists
         self.assertIn("raw_sensor_readings", tables)
 
-        # Verify calibration tables exist for all 5 sensors
+        # Verify calibration tables exist for all 6 sensors
         self.assertIn("sensor_calibrations", tables)
         self.assertIn("ph_calibration", tables)
         self.assertIn("do_calibration", tables)
         self.assertIn("salinity_calibration", tables)
         self.assertIn("temp_calibration", tables)
         self.assertIn("mixing_temp_calibration", tables)
+        self.assertIn("heating_temp_calibration", tables)
 
     def test_default_starting_calibration_values(self):
         """Verify default starting slope and offset values match previously hardcoded values."""
@@ -251,6 +254,69 @@ class TestCalibrationBackend(unittest.TestCase):
         self.assertIn("raw", item)
         self.assertEqual(item["raw"]["ph"], 1.50)
         self.assertAlmostEqual(item["ph"], round(-6.41401 * 1.50 + 17.29167, 2), places=2)
+
+    def test_salinity_voltage_normalized_to_25c_using_main_tank_ds18b20(self):
+        """Verify salinity voltage is normalized to 25C via V_25 = V_raw / (1 + alpha * (T - 25))."""
+        ensure_default_calibrations(self.conn)
+
+        # At 25.0°C, V_25 == V_raw
+        self.assertAlmostEqual(normalize_salinity_voltage_to_25c(0.88, 25.0), 0.88, places=6)
+
+        # At 30.0°C with alpha=0.02: V_25 = 0.88 / (1 + 0.02 * (30 - 25)) = 0.88 / 1.10 = 0.80
+        self.assertEqual(SALINITY_TEMP_ALPHA, 0.02)
+        self.assertAlmostEqual(normalize_salinity_voltage_to_25c(0.88, 30.0), 0.80, places=6)
+
+        # create_sensor_reading exposes salinity_voltage_25c using main tank DS18B20 temperature
+        raw_data = {
+            "timestamp": "2026-11-19T10:00:00+00:00",
+            "raw_temperature": 30.0,
+            "raw_dissolved_oxygen": 1.15,
+            "raw_salinity": 0.88,
+            "raw_ph": 1.60,
+            "raw_mixing_temperature": 22.0,  # Mixing tank temp must NOT be used for salinity
+        }
+        reading = create_sensor_reading(raw_data)
+        self.assertAlmostEqual(reading["salinity_voltage_25c"], 0.80, places=4)
+        self.assertAlmostEqual(reading["salinity_temp_c"], 30.0, places=2)
+        # Calibrated salinity = 38.265306 * 0.80 + 0.0 = 30.6122 -> 30.61 ppt
+        self.assertAlmostEqual(reading["salinity"], round(38.265306 * 0.80, 2), places=2)
+
+        # get_latest_reading (row_to_reading) also exposes the same normalized 25°C voltage
+        latest = get_latest_reading()
+        self.assertAlmostEqual(latest["salinity_voltage_25c"], 0.80, places=4)
+        self.assertAlmostEqual(latest["salinity_temp_c"], 30.0, places=2)
+        self.assertAlmostEqual(latest["salinity"], round(38.265306 * 0.80, 2), places=2)
+
+    def test_heating_tank_temp_calibration_and_sensor_id(self):
+        """Verify heating_temp calibration works end-to-end and default sensor ID is 28-7cf4d4452c40."""
+        from app.services.temp_sensor import HEATING_TANK_DEVICE_ID
+
+        self.assertEqual(HEATING_TANK_DEVICE_ID, "28-7cf4d4452c40")
+
+        ensure_default_calibrations(self.conn)
+        cal = get_latest_calibration("heating_temp", db=self.conn)
+        self.assertAlmostEqual(cal["slope"], 1.0, places=5)
+        self.assertAlmostEqual(cal["offset"], 0.0, places=5)
+
+        raw_data = {
+            "timestamp": "2026-11-19T11:00:00+00:00",
+            "raw_temperature": 26.0,
+            "raw_dissolved_oxygen": 1.15,
+            "raw_salinity": 0.85,
+            "raw_ph": 1.60,
+            "raw_mixing_temperature": 25.5,
+            "raw_heating_tank_temperature": 39.25,
+        }
+        reading = create_sensor_reading(raw_data)
+        self.assertAlmostEqual(reading["heating_tank_temperature"], 39.25, places=2)
+        self.assertAlmostEqual(reading["raw_heating_tank_temperature"], 39.25, places=2)
+        self.assertAlmostEqual(reading["raw"]["heating_tank_temperature"], 39.25, places=2)
+
+        # Apply +0.75C offset calibration to heating_temp
+        add_sensor_calibration("heating_temp", slope=1.0, offset=0.75, db=self.conn)
+        latest = get_latest_reading()
+        self.assertAlmostEqual(latest["heating_tank_temperature"], 40.00, places=2)
+        self.assertAlmostEqual(latest["raw_heating_tank_temperature"], 39.25, places=2)
 
 
 if __name__ == "__main__":

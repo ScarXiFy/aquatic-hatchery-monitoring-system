@@ -104,6 +104,14 @@
             </label>
 
             <label class="control-row">
+              <span class="control-label">Heating Tank Temperature</span>
+              <output id="heating_tank_setpoint-output">40&deg;C</output>
+              <input data-control-slider="heating_tank_setpoint" type="range" min="27" max="40" value="40" step="1">
+              <small id="heating_tank_setpoint-min">27&deg;C</small>
+              <small>40&deg;C</small>
+            </label>
+
+            <label class="control-row">
               <span class="control-label">Dissolved Oxygen</span>
               <output id="dissolved_oxygen_setpoint-output">7.2 mg/L</output>
               <input data-control-slider="dissolved_oxygen_setpoint" type="range" min="0" max="10" value="7.2" step="0.1">

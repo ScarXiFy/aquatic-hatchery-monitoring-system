@@ -9,21 +9,25 @@ from app.models import (
 )
 from app.api.piUtils import (
     applyTemperatureControl,
+    applyHeatingTankControl,
     applyDissolvedOxygenControl,
+    is_maintenance_mode,
     read_temp_sensor,
     read_secondary_temp_sensor,
+    read_heating_tank_temp_sensor,
     isRpiPresent,
 )
 from app.api.routes import CONTROL_STATE
 
 current_temp = None
+current_heating_tank_temp = None
 current_do_voltage = None
 current_ph_voltage = None
 current_sal_voltage = None
 
 
 def generate_sensor_reading():
-    global current_temp, current_do_voltage, current_ph_voltage, current_sal_voltage
+    global current_temp, current_heating_tank_temp, current_do_voltage, current_ph_voltage, current_sal_voltage
 
     # Read target settings from database
     targets = get_control_settings()
@@ -31,6 +35,11 @@ def generate_sensor_reading():
         target_temp = float(targets.get("temperature_setpoint", 26.0))
     except (TypeError, ValueError):
         target_temp = 26.0
+
+    try:
+        target_heating_tank_temp = float(targets.get("heating_tank_setpoint", 40.0))
+    except (TypeError, ValueError):
+        target_heating_tank_temp = 40.0
 
     try:
         target_do = float(targets.get("dissolved_oxygen_setpoint", 7.2))
@@ -76,6 +85,29 @@ def generate_sensor_reading():
             raw_mixing_temp = secondary_temp
     else:
         raw_mixing_temp = round(26.0 + random.uniform(-0.08, 0.08), 2)
+
+    # 2b. Heating Tank Temperature (Digital DS18B20, raw value in °C)
+    heating_sensor_temp = read_heating_tank_temp_sensor()
+    if heating_sensor_temp is not None:
+        if abs(heating_sensor_temp - 85.0) < 0.01:
+            raw_heating_tank_temp = (
+                current_heating_tank_temp if current_heating_tank_temp is not None else target_heating_tank_temp
+            )
+        else:
+            raw_heating_tank_temp = heating_sensor_temp
+            current_heating_tank_temp = heating_sensor_temp
+    else:
+        if current_heating_tank_temp is None:
+            current_heating_tank_temp = target_heating_tank_temp
+        ht_diff = target_heating_tank_temp - current_heating_tank_temp
+        if abs(ht_diff) > 0.01:
+            ht_step = 0.25 if ht_diff > 0 else -0.25
+            if abs(ht_diff) < 0.25:
+                current_heating_tank_temp = target_heating_tank_temp
+            else:
+                current_heating_tank_temp += ht_step
+        current_heating_tank_temp += random.uniform(-0.05, 0.05)
+        raw_heating_tank_temp = round(current_heating_tank_temp, 2)
 
     # 3. Dissolved Oxygen (Analog ADS1115 Channel 2, raw value in V)
     raw_do = None
@@ -194,12 +226,14 @@ def generate_sensor_reading():
         "salinity": raw_sal,
         "ph": raw_ph,
         "mixing_temperature": raw_mixing_temp,
+        "heating_tank_temperature": raw_heating_tank_temp,
         # Explicit raw keys:
         "raw_temperature": raw_temp,
         "raw_dissolved_oxygen": raw_do,
         "raw_salinity": raw_sal,
         "raw_ph": raw_ph,
         "raw_mixing_temperature": raw_mixing_temp,
+        "raw_heating_tank_temperature": raw_heating_tank_temp,
     }
 
 
@@ -209,7 +243,12 @@ def start_sensor_simulator(socketio, app):
         while True:
             # create_sensor_reading stores raw values into raw_sensor_readings
             # and applies the latest calibration equations to return calibrated values
-            reading = create_sensor_reading(generate_sensor_reading())
+            raw_reading = generate_sensor_reading()
+            reading = create_sensor_reading(raw_reading)
+            heating_tank_temp = reading.get("heating_tank_temperature")
+            if heating_tank_temp is None:
+                heating_tank_temp = raw_reading.get("heating_tank_temperature")
+                reading["heating_tank_temperature"] = heating_tank_temp
             socketio.emit("sensor_update", reading)
 
             # Keep CONTROL_STATE sliders updated for any other parts of the app
@@ -220,15 +259,20 @@ def start_sensor_simulator(socketio, app):
             secondary_temp = reading.get("mixing_temperature")
             if secondary_temp is None:
                 secondary_temp = read_secondary_temp_sensor()
-            # Controls operate on calibrated values:
-            applyTemperatureControl(
-                reading["temperature"],
-                targets.get("temperature_setpoint", 26.0),
-                secondary_temp=secondary_temp,
-            )
-            applyDissolvedOxygenControl(
-                reading["dissolved_oxygen"],
-                targets.get("dissolved_oxygen_setpoint", 7.2),
-            )
+            # Automated controls only run in normal mode (paused during maintenance mode):
+            if not is_maintenance_mode():
+                applyTemperatureControl(
+                    reading["temperature"],
+                    targets.get("temperature_setpoint", 26.0),
+                    secondary_temp=secondary_temp,
+                )
+                applyHeatingTankControl(
+                    heating_tank_temp,
+                    targets.get("heating_tank_setpoint", 40.0),
+                )
+                applyDissolvedOxygenControl(
+                    reading["dissolved_oxygen"],
+                    targets.get("dissolved_oxygen_setpoint", 7.2),
+                )
 
             socketio.sleep(interval)

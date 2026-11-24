@@ -68,9 +68,9 @@
       unit: "ppt",
       inputUnit: "V",
       channelLabel: "ADC Channel 1 (ADS1115)",
-      actualLabel: "Actual Voltage Reading",
+      actualLabel: "Normalized Voltage at 25°C (V₂₅)",
       refLabel: "Reference Instrument Reading (ppt)",
-      actualColTitle: "Sensor Voltage (V)",
+      actualColTitle: "Normalized Voltage at 25°C (V)",
       defaultSlope: 38.265306,
       defaultOffset: 0.0,
       refPlaceholder: "e.g. 35.0",
@@ -81,7 +81,7 @@
       ],
       defaultLive: 0.852,
       simVoltageRange: [0.75, 0.95],
-      formatEquation: (m, b) => `Salinity = (${m.toFixed(4)}) · V + (${b.toFixed(4)})`,
+      formatEquation: (m, b) => `Salinity = (${m.toFixed(4)}) · V₂₅ + (${b.toFixed(4)})`,
     },
     temp: {
       key: "temp",
@@ -139,9 +139,47 @@
         return `T_cal = (${m.toFixed(4)}) · T_sensor + (${b.toFixed(4)})`;
       },
     },
+    heating_temp: {
+      key: "heating_temp",
+      name: "Heating Tank Temperature Sensor",
+      type: "temp",
+      unit: "°C",
+      inputUnit: "°C",
+      channelLabel: "DS18B20 1-Wire (Heating Tank - 28-7cf4d4452c40)",
+      actualLabel: "Actual Temperature Reading",
+      refLabel: "Reference Thermometer Reading (°C)",
+      actualColTitle: "Sensor Temperature (°C)",
+      defaultSlope: 1.0,
+      defaultOffset: 0.0,
+      refPlaceholder: "e.g. 40.0",
+      actualPlaceholder: "e.g. 40.0",
+      standardPoints: [
+        { ref: 30.0, actual: "" },
+        { ref: 40.0, actual: "" },
+      ],
+      defaultLive: 40.0,
+      simTempRange: [35.0, 42.0],
+      formatEquation: (m, b) => {
+        if (Math.abs(m - 1.0) < 0.0001) {
+          const sign = b >= 0 ? "+" : "-";
+          return `T_cal = T_sensor ${sign} ${Math.abs(b).toFixed(2)} °C`;
+        }
+        return `T_cal = (${m.toFixed(4)}) · T_sensor + (${b.toFixed(4)})`;
+      },
+    },
   };
 
   const STORAGE_KEY_CALIBRATION = "hatchery:calibrations";
+  const SALINITY_TEMP_ALPHA = 0.02; // Standard aquatic EC temperature coefficient (per °C)
+  const SALINITY_REF_TEMP_C = 25.0;
+
+  function normalizeSalinityVoltageTo25C(rawVoltage, tempC) {
+    if (!isFinite(rawVoltage)) return rawVoltage;
+    if (tempC === null || tempC === undefined || !isFinite(tempC)) return rawVoltage;
+    const denom = 1.0 + SALINITY_TEMP_ALPHA * (tempC - SALINITY_REF_TEMP_C);
+    if (Math.abs(denom) < 1e-6) return rawVoltage;
+    return rawVoltage / denom;
+  }
 
   // Application state
   let currentSensorKey = "ph";
@@ -151,6 +189,7 @@
     salinity: 0.852,
     temp: 26.2,
     mixing_temp: 26.0,
+    heating_temp: 40.0,
   };
   let activeCalibrations = {};
   let pendingCalculation = null; // Holds newly calculated equation awaiting commission
@@ -242,7 +281,10 @@
     confirmCancelBtn,
     confirmProceedBtn,
     confirmSensorName,
-    confirmEquationText;
+    confirmEquationText,
+    salinityTempNotice,
+    salinityCompTemp,
+    salinityCompRawV;
 
   function initDOM() {
     modalOverlay = document.getElementById("calibration-modal-overlay");
@@ -279,6 +321,9 @@
     confirmProceedBtn = document.getElementById("confirm-commission-proceed-btn");
     confirmSensorName = document.getElementById("confirm-sensor-name");
     confirmEquationText = document.getElementById("confirm-equation-text");
+    salinityTempNotice = document.getElementById("salinity-temp-comp-notice");
+    salinityCompTemp = document.getElementById("salinity-comp-temp");
+    salinityCompRawV = document.getElementById("salinity-comp-raw-v");
 
     if (!modalOverlay || !openBtn) return false;
 
@@ -400,7 +445,15 @@
     }
 
     if (colSensorTitle) {
-      colSensorTitle.innerHTML = `Actual Sensor Reading (<span class="unit-span">${config.inputUnit}</span>)`;
+      if (sensorKey === "salinity") {
+        colSensorTitle.innerHTML = `Normalized Voltage at 25°C (<span class="unit-span">${config.inputUnit}</span>)`;
+      } else {
+        colSensorTitle.innerHTML = `Actual Sensor Reading (<span class="unit-span">${config.inputUnit}</span>)`;
+      }
+    }
+
+    if (salinityTempNotice) {
+      salinityTempNotice.hidden = sensorKey !== "salinity";
     }
 
     // Load active or default points
@@ -925,9 +978,71 @@
     }
   }
 
+  // Main Tank DS18B20 temperature reading used for Salinity 25°C normalization
+  function getMainTankTempForSalinity() {
+    if (window.HATCHERY_LATEST_READING) {
+      const r = window.HATCHERY_LATEST_READING;
+      if (r.salinity_temp_c !== undefined && r.salinity_temp_c !== null && isFinite(Number(r.salinity_temp_c))) {
+        return Number(r.salinity_temp_c);
+      }
+      if (r.temperature !== undefined && r.temperature !== null && isFinite(Number(r.temperature))) {
+        return Number(r.temperature);
+      }
+      if (r.raw && r.raw.temperature !== undefined && r.raw.temperature !== null && isFinite(Number(r.raw.temperature))) {
+        return Number(r.raw.temperature);
+      }
+      if (r.raw_temperature !== undefined && r.raw_temperature !== null && isFinite(Number(r.raw_temperature))) {
+        return Number(r.raw_temperature);
+      }
+    }
+    const el = document.getElementById("temperature-value");
+    if (el && !isNaN(parseFloat(el.textContent))) {
+      return parseFloat(el.textContent);
+    }
+    return liveReadings.temp || SENSOR_CONFIGS.temp.defaultLive;
+  }
+
+  function getRawSalinityVoltage() {
+    const config = SENSOR_CONFIGS.salinity;
+    if (window.HATCHERY_LATEST_READING) {
+      const r = window.HATCHERY_LATEST_READING;
+      if (r.raw && r.raw.salinity !== undefined && r.raw.salinity !== null) {
+        return Number(r.raw.salinity);
+      }
+      if (r.raw_salinity !== undefined && r.raw_salinity !== null) {
+        return Number(r.raw_salinity);
+      }
+    }
+    return liveReadings.salinity || config.defaultLive;
+  }
+
   // Live Reading simulation / integration
   function getLiveReadingForSensor(sensorKey) {
     const config = SENSOR_CONFIGS[sensorKey];
+
+    // Salinity calibration uses voltage normalized to 25°C using the Main Tank DS18B20 temperature
+    if (sensorKey === "salinity") {
+      if (window.HATCHERY_LATEST_READING) {
+        const r = window.HATCHERY_LATEST_READING;
+        if (r.salinity_voltage_25c !== undefined && r.salinity_voltage_25c !== null && isFinite(Number(r.salinity_voltage_25c))) {
+          return Number(r.salinity_voltage_25c);
+        }
+        if (r.raw && r.raw.salinity !== undefined) {
+          return normalizeSalinityVoltageTo25C(Number(r.raw.salinity), getMainTankTempForSalinity());
+        }
+        if (r.raw_salinity !== undefined) {
+          return normalizeSalinityVoltageTo25C(Number(r.raw_salinity), getMainTankTempForSalinity());
+        }
+        if (r.salinity !== undefined) {
+          return (Number(r.salinity) - config.defaultOffset) / config.defaultSlope;
+        }
+      }
+      return normalizeSalinityVoltageTo25C(
+        liveReadings.salinity || config.defaultLive,
+        getMainTankTempForSalinity()
+      );
+    }
+
     if (window.HATCHERY_LATEST_READING) {
       const r = window.HATCHERY_LATEST_READING;
 
@@ -935,15 +1050,15 @@
       if (r.raw) {
         if (sensorKey === "temp" && r.raw.temperature !== undefined) return Number(r.raw.temperature);
         if (sensorKey === "mixing_temp" && r.raw.mixing_temperature !== undefined) return Number(r.raw.mixing_temperature);
+        if (sensorKey === "heating_temp" && r.raw.heating_tank_temperature !== undefined && r.raw.heating_tank_temperature !== null) return Number(r.raw.heating_tank_temperature);
         if (sensorKey === "ph" && r.raw.ph !== undefined) return Number(r.raw.ph);
         if (sensorKey === "do" && r.raw.dissolved_oxygen !== undefined) return Number(r.raw.dissolved_oxygen);
-        if (sensorKey === "salinity" && r.raw.salinity !== undefined) return Number(r.raw.salinity);
       }
       if (sensorKey === "temp" && r.raw_temperature !== undefined) return Number(r.raw_temperature);
       if (sensorKey === "mixing_temp" && r.raw_mixing_temperature !== undefined) return Number(r.raw_mixing_temperature);
+      if (sensorKey === "heating_temp" && r.raw_heating_tank_temperature !== undefined && r.raw_heating_tank_temperature !== null) return Number(r.raw_heating_tank_temperature);
       if (sensorKey === "ph" && r.raw_ph !== undefined) return Number(r.raw_ph);
       if (sensorKey === "do" && r.raw_dissolved_oxygen !== undefined) return Number(r.raw_dissolved_oxygen);
-      if (sensorKey === "salinity" && r.raw_salinity !== undefined) return Number(r.raw_salinity);
 
       // Fallbacks
       if (sensorKey === "temp" && r.temperature !== undefined) {
@@ -952,14 +1067,14 @@
       if (sensorKey === "mixing_temp") {
         return Number(r.mixing_temperature || r.temperature || 26.0);
       }
+      if (sensorKey === "heating_temp" && r.heating_tank_temperature !== undefined && r.heating_tank_temperature !== null) {
+        return Number(r.heating_tank_temperature);
+      }
       if (sensorKey === "ph" && r.ph !== undefined) {
         return (Number(r.ph) - config.defaultOffset) / config.defaultSlope;
       }
       if (sensorKey === "do" && r.dissolved_oxygen !== undefined) {
         return (Number(r.dissolved_oxygen) - config.defaultOffset) / config.defaultSlope;
-      }
-      if (sensorKey === "salinity" && r.salinity !== undefined) {
-        return (Number(r.salinity) - config.defaultOffset) / config.defaultSlope;
       }
     }
 
@@ -985,6 +1100,17 @@
       const active = getActiveConfig(currentSensorKey);
       const derived = active.slope * liveVal + active.offset;
       derivedValue.textContent = derived.toFixed(2);
+    }
+
+    if (currentSensorKey === "salinity") {
+      const mainTemp = getMainTankTempForSalinity();
+      const rawV = getRawSalinityVoltage();
+      if (salinityCompTemp && isFinite(mainTemp)) {
+        salinityCompTemp.textContent = mainTemp.toFixed(2);
+      }
+      if (salinityCompRawV && isFinite(rawV)) {
+        salinityCompRawV.textContent = rawV.toFixed(3);
+      }
     }
   }
 
@@ -1054,7 +1180,7 @@
             localStorage.setItem(STORAGE_KEY_CALIBRATION, JSON.stringify(activeCalibrations));
           } catch (e) {}
           updateLiveDisplay();
-          updateEquationSection();
+          updateEquationSummary();
         }
       })
       .catch((err) => {

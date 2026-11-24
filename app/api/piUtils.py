@@ -4,14 +4,20 @@ import time
 import logging
 import threading
 
-# Timing configuration for heating and mixing control
-HEATER_PULSE_DURATION = 5.0       # Duration in seconds the heater stays ON per pulse
-HEATER_CHECK_INTERVAL = 15.0      # Wait time in seconds between heating checks/pulses
+# Timing configuration for mixing and water pump control
 MIXER_SHUTDOWN_DELAY = 10.0       # Run-on time in seconds for mixer after cooling/heating stops
+HEATING_PUMP_START_DELAY = 40.0   # Seconds after heating valve opens before heating tank pump activates (TBD)
+HEATING_PUMP_RUN_DURATION = 120.0 # Seconds (2 minutes) heating tank pump stays active after timed activation
+COOLING_PUMP_START_DELAY = 40.0   # Seconds after cooling valve opens before cooling tank pump activates (TBD)
+COOLING_PUMP_RUN_DURATION = 120.0 # Seconds (2 minutes) cooling tank pump stays active after timed activation
 
 # Heating system relay & Mixer motor pins
 heatingSystemPin = 26
 mixerPin = 5
+
+# Water pump relay control pins (Active-LOW: LOW=ON, HIGH=OFF)
+heatingPumpPin = 11               # Water pump directed to the heating tank
+coolingPumpPin = 0                # Water pump directed to the cooling tank
 
 # Peltier cooling pins (8 cooling peltier modules)
 pel1Pin = 12
@@ -65,10 +71,11 @@ PWM_PIN = ledPWMPin
 LED_PWM_FREQ = 1000          # 1000Hz frequency for flicker-free LED operation
 MAX_LUX = 3000
 
-# Dissolved oxygen control pins
-doSolenoidValve1 = 10         # NEED TO CONFIG FOR 3 PINS
+# Dissolved oxygen control pins (2 solenoid valves: GPIO 10 and GPIO 9)
+DO_SOLENOID_VALVE_COUNT = 2
+doSolenoidValve1 = 10
 doSolenoidValve2 = 9
-doSolenoidValve3 = 11
+doSolenoidValve3 = None           # Removed; GPIO 11 reassigned to heating tank water pump relay
 
 # Stepper motor pins (Wantai 42bygh610-1 for bleed valve)
 bleedValveDirPin = 17
@@ -109,24 +116,37 @@ coolingValveOpen = True   # Initial stored value: OPEN for cooling
 heatingSystemActive = False
 heatingValveOpen = False  # Initial stored value: CLOSED for heating
 heaterActive = False
+heatingPumpActive = False
+coolingPumpActive = False
 mixerActive = False
 mixingFanActive = False
 last_temp_system = "cooling"  # Tracks last active temperature system ("heating" or "cooling")
 _heating_disabled_by_mixing = False
 _cooling_disabled_by_mixing = False
 
-# Synchronization for mixer and heater
+# Heating tank sensor-based control state
+HEATING_TANK_MIN_SETPOINT = 27.0
+HEATING_TANK_MAX_SETPOINT = 40.0
+heatingTankSetpoint = 40.0
+HEATING_TANK_TEMP_TOLERANCE = 0.0
+_heating_tank_setpoint_just_set = False
+_heating_pump_cooldown_active = False
+
+# Synchronization for mixer, heater, and water pumps
 _mixer_timer = None
 _mixer_lock = threading.Lock()
 
-_heating_thread = None
-_heating_stop_event = threading.Event()
 _heating_lock = threading.Lock()
+_pump_lock = threading.RLock()
+_heating_pump_start_timer = None
+_heating_pump_stop_timer = None
+_cooling_pump_start_timer = None
+_cooling_pump_stop_timer = None
 
 doSolenoidValveOpen = False
 doBleedValvePercent = 0  # 0-100 %
 bleedValveDriverEnabled = False
-_dosvcounter = 3
+_dosvcounter = DO_SOLENOID_VALVE_COUNT
 motorInit: bool = False
 aeratorFanActive = True if _dosvcounter > 0 else False
 aeratorCoolerFanActive = aeratorFanActive
@@ -314,16 +334,141 @@ def _update_mixer_state():
                 _mixer_timer.start()
                 print(f"[CONTROL] Cooling/heating disabled - mixer will turn OFF in {MIXER_SHUTDOWN_DELAY}s")
 
-def _heating_worker():
-    while not _heating_stop_event.is_set() and heatingSystemActive:
-        _set_heater_relay(True)
-        if _heating_stop_event.wait(HEATER_PULSE_DURATION):
-            _set_heater_relay(False)
-            break
-        _set_heater_relay(False)
+def setDummyHeatingPump(active: bool):
+    global heatingPumpActive
+    heatingPumpActive = bool(active)
+    print(f"[DUMMY] heating tank water pump (GPIO {heatingPumpPin}) -> {'ON' if heatingPumpActive else 'OFF'}")
 
-        if _heating_stop_event.wait(HEATER_CHECK_INTERVAL):
-            break
+
+def setDummyCoolingPump(active: bool):
+    global coolingPumpActive
+    coolingPumpActive = bool(active)
+    print(f"[DUMMY] cooling tank water pump (GPIO {coolingPumpPin}) -> {'ON' if coolingPumpActive else 'OFF'}")
+
+
+def setRpiHeatingPump(active: bool):
+    global heatingPumpActive
+    heatingPumpActive = bool(active)
+    print(f"[RPI] heating tank water pump (GPIO {heatingPumpPin}) -> {'ON' if heatingPumpActive else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingPumpPin, GPIO.LOW if heatingPumpActive else GPIO.HIGH)
+
+
+def setRpiCoolingPump(active: bool):
+    global coolingPumpActive
+    coolingPumpActive = bool(active)
+    print(f"[RPI] cooling tank water pump (GPIO {coolingPumpPin}) -> {'ON' if coolingPumpActive else 'OFF'}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(coolingPumpPin, GPIO.LOW if coolingPumpActive else GPIO.HIGH)
+
+
+heatingPump = setDummyHeatingPump
+setHeatingPump = setDummyHeatingPump
+coolingPump = setDummyCoolingPump
+setCoolingPump = setDummyCoolingPump
+
+
+def cancel_pump_timers():
+    """Cancel any pending heating or cooling water pump start/stop timers."""
+    global _heating_pump_start_timer, _heating_pump_stop_timer
+    global _cooling_pump_start_timer, _cooling_pump_stop_timer
+    with _pump_lock:
+        for attr in (
+            "_heating_pump_start_timer",
+            "_heating_pump_stop_timer",
+            "_cooling_pump_start_timer",
+            "_cooling_pump_stop_timer",
+        ):
+            timer = globals().get(attr)
+            if timer is not None:
+                try:
+                    timer.cancel()
+                except Exception:
+                    pass
+                globals()[attr] = None
+
+
+def _schedule_heating_pump_after_valve_open():
+    """
+    Schedules heating tank water pump activation HEATING_PUMP_START_DELAY seconds (40s)
+    after the heating control valve opens, and deactivation HEATING_PUMP_RUN_DURATION
+    seconds (2 minutes) after activation.
+    """
+    global _heating_pump_start_timer
+    with _pump_lock:
+        if _heating_pump_start_timer is not None:
+            _heating_pump_start_timer.cancel()
+            _heating_pump_start_timer = None
+
+        def _activate():
+            global _heating_pump_start_timer, _heating_pump_stop_timer
+            with _pump_lock:
+                _heating_pump_start_timer = None
+                heatingPump(True)
+                if _heating_pump_stop_timer is not None:
+                    _heating_pump_stop_timer.cancel()
+
+                def _deactivate():
+                    global _heating_pump_stop_timer
+                    with _pump_lock:
+                        _heating_pump_stop_timer = None
+                        if not _heating_pump_cooldown_active:
+                            heatingPump(False)
+
+                _heating_pump_stop_timer = threading.Timer(HEATING_PUMP_RUN_DURATION, _deactivate)
+                _heating_pump_stop_timer.daemon = True
+                _heating_pump_stop_timer.start()
+                print(
+                    f"[CONTROL] Heating tank water pump activated - will deactivate in {HEATING_PUMP_RUN_DURATION}s"
+                )
+
+        _heating_pump_start_timer = threading.Timer(HEATING_PUMP_START_DELAY, _activate)
+        _heating_pump_start_timer.daemon = True
+        _heating_pump_start_timer.start()
+        print(
+            f"[CONTROL] Heating valve opened - heating tank water pump will activate in {HEATING_PUMP_START_DELAY}s"
+        )
+
+
+def _schedule_cooling_pump_after_valve_open():
+    """
+    Schedules cooling tank water pump activation COOLING_PUMP_START_DELAY seconds (40s)
+    after the cooling control valve opens, and deactivation COOLING_PUMP_RUN_DURATION
+    seconds (2 minutes) after activation.
+    """
+    global _cooling_pump_start_timer
+    with _pump_lock:
+        if _cooling_pump_start_timer is not None:
+            _cooling_pump_start_timer.cancel()
+            _cooling_pump_start_timer = None
+
+        def _activate():
+            global _cooling_pump_start_timer, _cooling_pump_stop_timer
+            with _pump_lock:
+                _cooling_pump_start_timer = None
+                coolingPump(True)
+                if _cooling_pump_stop_timer is not None:
+                    _cooling_pump_stop_timer.cancel()
+
+                def _deactivate():
+                    global _cooling_pump_stop_timer
+                    with _pump_lock:
+                        _cooling_pump_stop_timer = None
+                        coolingPump(False)
+
+                _cooling_pump_stop_timer = threading.Timer(COOLING_PUMP_RUN_DURATION, _deactivate)
+                _cooling_pump_stop_timer.daemon = True
+                _cooling_pump_stop_timer.start()
+                print(
+                    f"[CONTROL] Cooling tank water pump activated - will deactivate in {COOLING_PUMP_RUN_DURATION}s"
+                )
+
+        _cooling_pump_start_timer = threading.Timer(COOLING_PUMP_START_DELAY, _activate)
+        _cooling_pump_start_timer.daemon = True
+        _cooling_pump_start_timer.start()
+        print(
+            f"[CONTROL] Cooling valve opened - cooling tank water pump will activate in {COOLING_PUMP_START_DELAY}s"
+        )
 
 def setRpiMixer(active: bool):
     global mixerActive, mixingFanActive
@@ -399,6 +544,8 @@ def setRpiCoolingValve(isOpen: bool):
     if isRpiPresent and GPIO is not None:
         _step_valve_motor(coolValveEnablePin, coolValveDirPin, coolValvePulPin, direction, VALVE_STEP_AMOUNT)
     coolingValveOpen = isOpen
+    if isOpen:
+        _schedule_cooling_pump_after_valve_open()
     try:
         from app.models import save_motor_state
         save_motor_state("cooling_valve", 1 if isOpen else 0)
@@ -417,6 +564,8 @@ def setRpiHeatingValve(isOpen: bool):
     if isRpiPresent and GPIO is not None:
         _step_valve_motor(heatValveEnablePin, heatValveDirPin, heatValvePulPin, direction, VALVE_STEP_AMOUNT)
     heatingValveOpen = isOpen
+    if isOpen:
+        _schedule_heating_pump_after_valve_open()
     try:
         from app.models import save_motor_state
         save_motor_state("heating_valve", 1 if isOpen else 0)
@@ -452,6 +601,8 @@ def setDummyCoolingValve(isOpen: bool):
     if isOpen == coolingValveOpen:
         return
     coolingValveOpen = isOpen
+    if isOpen:
+        _schedule_cooling_pump_after_valve_open()
     try:
         from app.models import save_motor_state
         save_motor_state("cooling_valve", 1 if isOpen else 0)
@@ -462,29 +613,20 @@ def setDummyCoolingValve(isOpen: bool):
     print(f"[DUMMY] cooling valve stepper -> {action_str} ({direction_str}, {VALVE_STEP_AMOUNT} steps)")
 
 def setDummyHeatingSystem(active: bool):
-    global heatingSystemActive, _heating_thread
+    global heatingSystemActive
     with _heating_lock:
         heatingSystemActive = active
         print(f"[DUMMY] heating system -> {'ON' if active else 'OFF'}")
-        if active:
-            _update_mixer_state()
-            _update_main_valve_state()
-            if _heating_thread is None or not _heating_thread.is_alive():
-                _heating_stop_event.clear()
-                _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
-                _heating_thread.start()
-        else:
-            _heating_stop_event.set()
-            _set_heater_relay(False)
-            _heating_thread = None
-            _update_mixer_state()
-            _update_main_valve_state()
+        _update_mixer_state()
+        _update_main_valve_state()
 
 def setDummyHeatingValve(isOpen: bool):
     global heatingValveOpen
     if isOpen == heatingValveOpen:
         return
     heatingValveOpen = isOpen
+    if isOpen:
+        _schedule_heating_pump_after_valve_open()
     try:
         from app.models import save_motor_state
         save_motor_state("heating_valve", 1 if isOpen else 0)
@@ -523,9 +665,9 @@ def setDummyDoSolenoidValve(isOpen: bool):
         _dosvcounter += 1
     else:
         _dosvcounter -= 1
-    _dosvcounter = max(0, min(3, _dosvcounter))
+    _dosvcounter = max(0, min(DO_SOLENOID_VALVE_COUNT, _dosvcounter))
     doSolenoidValveOpen = (_dosvcounter > 0)
-    print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
+    print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/{DO_SOLENOID_VALVE_COUNT}")
     _update_aerator_fan_state()
 
 def setRpiDoSolenoidValve(isOpen: bool):
@@ -534,9 +676,9 @@ def setRpiDoSolenoidValve(isOpen: bool):
         _dosvcounter += 1
     else:
         _dosvcounter -= 1
-    if _dosvcounter > 3:
+    if _dosvcounter > DO_SOLENOID_VALVE_COUNT:
         print(f"[RPI] MAX valves OPEN -> {_dosvcounter}")
-        _dosvcounter = 3
+        _dosvcounter = DO_SOLENOID_VALVE_COUNT
     elif _dosvcounter < 0:
         print(f"[RPI] ALL valves CLOSED -> {_dosvcounter}")
         _dosvcounter = 0
@@ -545,25 +687,18 @@ def setRpiDoSolenoidValve(isOpen: bool):
 
     if isRpiPresent and GPIO is not None:
         print(f"[RPI] DO solenoid valve -> {isOpen}")
-        print(f"[RPI] DO solenoid valves open: {_dosvcounter}/3")
-        if _dosvcounter == 3:
+        print(f"[RPI] DO solenoid valves open: {_dosvcounter}/{DO_SOLENOID_VALVE_COUNT}")
+        if _dosvcounter == 2:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 2:
-            GPIO.output(doSolenoidValve1, GPIO.LOW)
-            GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         elif _dosvcounter == 1:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         elif _dosvcounter == 0:
             GPIO.output(doSolenoidValve1, GPIO.HIGH)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
     else:
-        print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
+        print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/{DO_SOLENOID_VALVE_COUNT}")
 
     _update_aerator_fan_state()
 
@@ -572,32 +707,25 @@ doSolenoidValve = setDoSolenoidValve
 
 def setDoSolenoidValveCount(count: int):
     """
-    Directly set the number of open aerator solenoid valves (0 to 3).
+    Directly set the number of open aerator solenoid valves (0 to 2).
     Automatically updates the cooler fan state.
     """
     global _dosvcounter, doSolenoidValveOpen
-    count = max(0, min(3, int(count)))
+    count = max(0, min(DO_SOLENOID_VALVE_COUNT, int(count)))
     _dosvcounter = count
     doSolenoidValveOpen = (_dosvcounter > 0)
     if isRpiPresent and GPIO is not None:
-        if _dosvcounter == 3:
+        if _dosvcounter == 2:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.LOW)
-        elif _dosvcounter == 2:
-            GPIO.output(doSolenoidValve1, GPIO.LOW)
-            GPIO.output(doSolenoidValve2, GPIO.LOW)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         elif _dosvcounter == 1:
             GPIO.output(doSolenoidValve1, GPIO.LOW)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         elif _dosvcounter == 0:
             GPIO.output(doSolenoidValve1, GPIO.HIGH)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
     else:
-        print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/3")
+        print(f"[DUMMY] DO solenoid valves open: {_dosvcounter}/{DO_SOLENOID_VALVE_COUNT}")
     _update_aerator_fan_state()
 
 def setDummyDoBleedValve(percent: float):
@@ -847,10 +975,13 @@ if isRpiPresent:
     # Mixer motor (Active-LOW: LOW=ON, HIGH=OFF)
     GPIO.setup(mixerPin, GPIO.OUT, initial=GPIO.HIGH)
 
-    # Dissolved oxygen aerator solenoid valves
+    # Water pump relays for heating tank (GPIO 11) and cooling tank (GPIO 0) (Active-LOW: LOW=ON, HIGH=OFF)
+    GPIO.setup(heatingPumpPin, GPIO.OUT, initial=GPIO.HIGH)
+    GPIO.setup(coolingPumpPin, GPIO.OUT, initial=GPIO.HIGH)
+
+    # Dissolved oxygen aerator solenoid valves (2 valves: GPIO 10, GPIO 9)
     GPIO.setup(doSolenoidValve1, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 1 else GPIO.HIGH)
     GPIO.setup(doSolenoidValve2, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 2 else GPIO.HIGH)
-    GPIO.setup(doSolenoidValve3, GPIO.OUT, initial=GPIO.LOW if _dosvcounter >= 3 else GPIO.HIGH)
 
     # Stepper motor pins for Heating Valve (enable=6, dir=13, pul=19)
     GPIO.setup(heatValveEnablePin, GPIO.OUT)
@@ -911,25 +1042,16 @@ if isRpiPresent:
     setCoolingValve = setRpiCoolingValve
 
     def setHeatingSystem(active: bool):
-        global heatingSystemActive, _heating_thread
+        global heatingSystemActive
         with _heating_lock:
             heatingSystemActive = active
             print(f"[RPI] heating system -> {'ON' if active else 'OFF'}")
-            if active:
-                _update_mixer_state()
-                _update_main_valve_state()
-                if _heating_thread is None or not _heating_thread.is_alive():
-                    _heating_stop_event.clear()
-                    _heating_thread = threading.Thread(target=_heating_worker, daemon=True)
-                    _heating_thread.start()
-            else:
-                _heating_stop_event.set()
-                _set_heater_relay(False)
-                _heating_thread = None
-                _update_mixer_state()
-                _update_main_valve_state()
+            _update_mixer_state()
+            _update_main_valve_state()
 
     setHeatingValve = setRpiHeatingValve
+    setHeatingPump = setRpiHeatingPump
+    setCoolingPump = setRpiCoolingPump
     setAeratorFan = setRpiAeratorFan
     setAeratorCoolerFan = setRpiAeratorFan
     setDoSolenoidValve = setRpiDoSolenoidValve
@@ -943,6 +1065,8 @@ if isRpiPresent:
     coolingValve = setCoolingValve
     heatingSystem = setHeatingSystem
     heatingValve = setHeatingValve
+    heatingPump = setHeatingPump
+    coolingPump = setCoolingPump
     mixer = setMixer
     mixingFan = setMixer
     setMixingFan = setMixer
@@ -976,11 +1100,12 @@ _mix_consecutive_cool_enable = 0
 
 
 def reset_temperature_control_state():
-    """Reset consecutive reading counters for temperature threshold debouncing and mixing tank control."""
+    """Reset consecutive reading counters for temperature threshold debouncing, mixing tank control, and heating tank pump state."""
     global _temp_consecutive_high, _temp_consecutive_low
     global _heating_disabled_by_mixing, _cooling_disabled_by_mixing
     global _mix_consecutive_heat_disable, _mix_consecutive_heat_enable
     global _mix_consecutive_cool_disable, _mix_consecutive_cool_enable
+    global _heating_tank_setpoint_just_set, _heating_pump_cooldown_active
     _temp_consecutive_high = 0
     _temp_consecutive_low = 0
     _heating_disabled_by_mixing = False
@@ -989,6 +1114,110 @@ def reset_temperature_control_state():
     _mix_consecutive_heat_enable = 0
     _mix_consecutive_cool_disable = 0
     _mix_consecutive_cool_enable = 0
+    _heating_tank_setpoint_just_set = False
+    _heating_pump_cooldown_active = False
+    cancel_pump_timers()
+
+
+def set_heating_tank_setpoint(setpoint: float):
+    """
+    Record a newly configured heating tank temperature setpoint from the web app slider.
+    Clamps within [HEATING_TANK_MIN_SETPOINT (27C), HEATING_TANK_MAX_SETPOINT (40C)] and
+    marks the setpoint as just set so that if the heating tank sensor detects that the
+    current heating tank temperature is too high, the heating tank water pump will activate
+    until the setpoint is met.
+    """
+    global heatingTankSetpoint, _heating_tank_setpoint_just_set
+    try:
+        val = float(setpoint)
+    except (TypeError, ValueError):
+        return
+    heatingTankSetpoint = max(HEATING_TANK_MIN_SETPOINT, min(HEATING_TANK_MAX_SETPOINT, val))
+    _heating_tank_setpoint_just_set = True
+    print(f"[CONTROL] Heating tank setpoint updated -> {heatingTankSetpoint:.2f}C")
+
+
+def applyHeatingTankControl(
+    heating_tank_temp: float,
+    setpoint: float = None,
+    tolerance: float = HEATING_TANK_TEMP_TOLERANCE,
+):
+    """
+    Sensor-based heater and heating tank water pump control:
+    - Compares the heating tank temperature sensor reading against the user-configured
+      heating tank temperature setpoint.
+    - If heating_tank_temp < setpoint - tolerance:
+        Activates heater relay to add more heat (and stops any cooldown pump override).
+    - If heating_tank_temp >= setpoint:
+        Deactivates heater relay to cool down.
+    - Additional logic for setpoint change:
+        When the setpoint has just been set and the heating tank sensor detects that the
+        current heating tank temperature is too high (> setpoint), activates the heating
+        tank water pump until the heating tank temperature drops to <= setpoint.
+    """
+    global heatingTankSetpoint, _heating_tank_setpoint_just_set, _heating_pump_cooldown_active
+
+    if maintenanceModeActive:
+        return
+
+    if setpoint is not None:
+        try:
+            heatingTankSetpoint = float(setpoint)
+        except (TypeError, ValueError):
+            pass
+
+    target = float(heatingTankSetpoint)
+
+    if heating_tank_temp is None:
+        # Safety: if heating tank sensor cannot be read, keep heater OFF
+        _set_heater_relay(False)
+        return
+
+    temp_val = round(float(heating_tank_temp), 4)
+    low_threshold = round(target - float(tolerance), 4)
+
+    if temp_val < low_threshold:
+        _heating_tank_setpoint_just_set = False
+        if _heating_pump_cooldown_active:
+            with _pump_lock:
+                _heating_pump_cooldown_active = False
+                if _heating_pump_stop_timer is None:
+                    heatingPump(False)
+        if not heaterActive:
+            print(
+                f"[CONTROL] Heating tank temp LOW ({temp_val}C < {low_threshold}C, setpoint {target}C) - activating heater"
+            )
+        _set_heater_relay(True)
+    else:
+        if temp_val >= round(target, 4):
+            if heaterActive:
+                print(
+                    f"[CONTROL] Heating tank temp AT/ABOVE setpoint ({temp_val}C >= {target}C) - deactivating heater"
+                )
+            _set_heater_relay(False)
+
+        if _heating_tank_setpoint_just_set:
+            _heating_tank_setpoint_just_set = False
+            if temp_val > round(target, 4):
+                with _pump_lock:
+                    _heating_pump_cooldown_active = True
+                    heatingPump(True)
+                print(
+                    f"[CONTROL] Heating tank temp TOO HIGH after setpoint change ({temp_val}C > {target}C) - activating heating tank water pump until setpoint is met"
+                )
+        elif _heating_pump_cooldown_active:
+            if temp_val <= round(target, 4):
+                with _pump_lock:
+                    _heating_pump_cooldown_active = False
+                    if _heating_pump_stop_timer is None:
+                        heatingPump(False)
+                print(
+                    f"[CONTROL] Heating tank setpoint met ({temp_val}C <= {target}C) - deactivating heating tank water pump"
+                )
+            else:
+                with _pump_lock:
+                    if not heatingPumpActive:
+                        heatingPump(True)
 
 
 def applyTemperatureControl(
@@ -1033,6 +1262,9 @@ def applyTemperatureControl(
     global _heating_disabled_by_mixing, _cooling_disabled_by_mixing
     global _mix_consecutive_heat_disable, _mix_consecutive_heat_enable
     global _mix_consecutive_cool_disable, _mix_consecutive_cool_enable
+
+    if maintenanceModeActive:
+        return
     high = round(setpoint + tolerance, 4)
     low  = round(setpoint - tolerance, 4)
 
@@ -1205,6 +1437,9 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
         DO HIGH -> all aerator valves closed, bleed valve fully opened (100.0%) to bleed excess oxygen.
     """
     global _last_do_trig_time
+
+    if maintenanceModeActive:
+        return
     high = round(setpoint + tolerance, 4)
     low  = round(setpoint - tolerance, 4)
 
@@ -1227,7 +1462,7 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
 
     # Stable / recovering: between (setpoint - tolerance) and setpoint
     if low < do_level < setpoint:
-        print(f"[CONTROL] DO RECOVERING ({do_level} mg/L within -{tolerance} mg/L of setpoint {setpoint} mg/L) - maintaining {_dosvcounter}/3 open valves, bleed valve {doBleedValvePercent:.1f}%")
+        print(f"[CONTROL] DO RECOVERING ({do_level} mg/L within -{tolerance} mg/L of setpoint {setpoint} mg/L) - maintaining {_dosvcounter}/{DO_SOLENOID_VALVE_COUNT} open valves, bleed valve {doBleedValvePercent:.1f}%")
         return
 
     # Low DO: deviation has reached or exceeded 0.3 mg/L below setpoint
@@ -1247,6 +1482,7 @@ def applyDissolvedOxygenControl(do_level: float, setpoint: float, tolerance: flo
 
 _temp_device_file = None
 _temp_secondary_device_file = None
+_temp_heating_device_file = None
 
 if isRpiPresent:
     import os as _os
@@ -1256,8 +1492,12 @@ if isRpiPresent:
     _os.system("modprobe w1-therm")
 
     _base_dir = "/sys/bus/w1/devices/"
-    _temp_device_file = _base_dir + "28-000000b197bd" + "/w1_slave"
-    _temp_secondary_device_file = _base_dir + "28-000000b260f4" + "/w1_slave"
+    _main_id = "28-000000b197bd"
+    _mixing_id = "28-000000b260f4"
+    _heating_id = _os.environ.get("HEATING_TANK_DEVICE_ID", "").strip() or "28-7cf4d4452c40"
+
+    _temp_device_file = _base_dir + _main_id + "/w1_slave"
+    _temp_secondary_device_file = _base_dir + _mixing_id + "/w1_slave"
     if _os.path.exists(_temp_device_file):
         print(f"[RPI] DS18B20 Main tank sensor found: {_temp_device_file}")
     else:
@@ -1269,6 +1509,24 @@ if isRpiPresent:
     else:
         _temp_secondary_device_file = None
         print("[RPI] DS18B20 Mixing sensor not found - Mixing temperature will use simulated value")
+
+    if _heating_id and _os.path.exists(_base_dir + _heating_id + "/w1_slave"):
+        _temp_heating_device_file = _base_dir + _heating_id + "/w1_slave"
+    else:
+        _discovered = sorted(_glob.glob(_base_dir + "28-*"))
+        _extra = [
+            d + "/w1_slave"
+            for d in _discovered
+            if _os.path.basename(d) not in (_main_id, _mixing_id)
+            and _os.path.exists(d + "/w1_slave")
+        ]
+        if _extra:
+            _temp_heating_device_file = _extra[0]
+
+    if _temp_heating_device_file is not None:
+        print(f"[RPI] DS18B20 Heating tank sensor found: {_temp_heating_device_file}")
+    else:
+        print("[RPI] DS18B20 Heating tank sensor not found - Heating tank temperature will use simulated value")
 
 
 def _read_temp_raw():
@@ -1369,12 +1627,363 @@ def read_secondary_temp_sensor():
         return None
 
 
+def read_heating_tank_temp_sensor():
+    """
+    Read temperature (C) from the Heating tank DS18B20 1-Wire sensor.
+    Returns a float on RPi when the sensor is present and valid,
+    or None otherwise (then use simulated value). Rejects invalid 85.0C reading.
+    """
+    if not isRpiPresent or _temp_heating_device_file is None:
+        print("[DUMMY] Heating tank temperature sensor read - using simulated value")
+        return None
+    try:
+        val = _parse_ds18b20(_temp_heating_device_file, "heating_tank")
+        if val is not None and abs(val - 85.0) < 0.01:
+            print("[RPI] Heating tank DS18B20 rejected invalid 85.0C reading")
+            return None
+        return val
+    except Exception as e:
+        print(f"[RPI] Heating tank DS18B20 read failed ({e}) - using simulated value")
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Maintenance Mode (Isolated Manual Component Testing & State Reversion)
+# ---------------------------------------------------------------------------
+
+maintenanceModeActive: bool = False
+_maintenance_lock = threading.RLock()
+_maintenance_snapshot = None
+_maintenance_components = {
+    "heater": False,
+    "heating_valve": False,
+    "cooling_valve": True,
+    "peltiers": False,
+    "aerator_valve_1": True,
+    "aerator_valve_2": True,
+    "heating_pump": False,
+    "cooling_pump": False,
+    "mixing_fan": False,
+}
+
+
+def is_maintenance_mode() -> bool:
+    """Return True if the system is currently in isolated manual maintenance mode."""
+    return bool(maintenanceModeActive)
+
+
+def _current_normal_component_states() -> dict:
+    """Read the current normal-mode hardware states for all maintenance-controllable components."""
+    return {
+        "heater": bool(heaterActive),
+        "heating_valve": bool(heatingValveOpen),
+        "cooling_valve": bool(coolingValveOpen),
+        "peltiers": bool(coolingSystemActive),
+        "aerator_valve_1": bool(_dosvcounter >= 1),
+        "aerator_valve_2": bool(_dosvcounter >= 2),
+        "heating_pump": bool(heatingPumpActive),
+        "cooling_pump": bool(coolingPumpActive),
+        "mixing_fan": bool(mixerActive),
+    }
+
+
+def get_maintenance_state() -> dict:
+    """
+    Return the current maintenance mode status and component states.
+    When maintenance mode is active, returns the isolated maintenance component states;
+    when inactive, returns the live normal-mode component states.
+    """
+    with _maintenance_lock:
+        components = (
+            dict(_maintenance_components)
+            if maintenanceModeActive
+            else _current_normal_component_states()
+        )
+        return {
+            "active": bool(maintenanceModeActive),
+            "components": components,
+        }
+
+
+def _apply_maintenance_heater(active: bool):
+    state = bool(active)
+    _maintenance_components["heater"] = state
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingSystemPin, GPIO.HIGH if state else GPIO.LOW)
+        print(f"[MAINTENANCE][RPI] heater relay (GPIO {heatingSystemPin}) -> {'ON' if state else 'OFF'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] heater relay -> {'ON' if state else 'OFF'}")
+
+
+def _apply_maintenance_heating_valve(is_open: bool):
+    state = bool(is_open)
+    if state == _maintenance_components["heating_valve"]:
+        return
+    direction = CCW if state else CW
+    action_str = "OPEN (CCW)" if state else "CLOSED (CW)"
+    if isRpiPresent and GPIO is not None:
+        print(f"[MAINTENANCE][RPI] heating valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps")
+        _step_valve_motor(heatValveEnablePin, heatValveDirPin, heatValvePulPin, direction, VALVE_STEP_AMOUNT)
+    else:
+        print(f"[MAINTENANCE][DUMMY] heating valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps")
+    _maintenance_components["heating_valve"] = state
+    try:
+        from app.models import save_motor_state
+        save_motor_state("heating_valve", 1 if state else 0)
+    except Exception:
+        pass
+
+
+def _apply_maintenance_cooling_valve(is_open: bool):
+    state = bool(is_open)
+    if state == _maintenance_components["cooling_valve"]:
+        return
+    direction = CCW if state else CW
+    action_str = "OPEN (CCW)" if state else "CLOSED (CW)"
+    if isRpiPresent and GPIO is not None:
+        print(f"[MAINTENANCE][RPI] cooling valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps")
+        _step_valve_motor(coolValveEnablePin, coolValveDirPin, coolValvePulPin, direction, VALVE_STEP_AMOUNT)
+    else:
+        print(f"[MAINTENANCE][DUMMY] cooling valve stepper -> {action_str} {VALVE_STEP_AMOUNT} steps")
+    _maintenance_components["cooling_valve"] = state
+    try:
+        from app.models import save_motor_state
+        save_motor_state("cooling_valve", 1 if state else 0)
+    except Exception:
+        pass
+
+
+def _apply_maintenance_peltiers(active: bool):
+    state = bool(active)
+    _maintenance_components["peltiers"] = state
+    if isRpiPresent and GPIO is not None:
+        for pin in PELTIER_PINS:
+            GPIO.output(pin, GPIO.LOW if state else GPIO.HIGH)
+        print(f"[MAINTENANCE][RPI] peltier modules (all {len(PELTIER_PINS)}) -> {'ON' if state else 'OFF'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] peltier modules (all {len(PELTIER_PINS)}) -> {'ON' if state else 'OFF'}")
+
+
+def _apply_maintenance_aerator_valve(valve_num: int, is_open: bool):
+    state = bool(is_open)
+    if valve_num == 1:
+        _maintenance_components["aerator_valve_1"] = state
+        pin = doSolenoidValve1
+    elif valve_num == 2:
+        _maintenance_components["aerator_valve_2"] = state
+        pin = doSolenoidValve2
+    else:
+        raise ValueError(f"Invalid aerator valve number: {valve_num}")
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(pin, GPIO.LOW if state else GPIO.HIGH)
+        print(f"[MAINTENANCE][RPI] aerator solenoid valve {valve_num} (GPIO {pin}) -> {'OPEN' if state else 'CLOSED'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] aerator solenoid valve {valve_num} -> {'OPEN' if state else 'CLOSED'}")
+
+
+def _apply_maintenance_heating_pump(active: bool):
+    state = bool(active)
+    _maintenance_components["heating_pump"] = state
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(heatingPumpPin, GPIO.LOW if state else GPIO.HIGH)
+        print(f"[MAINTENANCE][RPI] heating tank water pump (GPIO {heatingPumpPin}) -> {'ON' if state else 'OFF'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] heating tank water pump -> {'ON' if state else 'OFF'}")
+
+
+def _apply_maintenance_cooling_pump(active: bool):
+    state = bool(active)
+    _maintenance_components["cooling_pump"] = state
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(coolingPumpPin, GPIO.LOW if state else GPIO.HIGH)
+        print(f"[MAINTENANCE][RPI] cooling tank water pump (GPIO {coolingPumpPin}) -> {'ON' if state else 'OFF'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] cooling tank water pump -> {'ON' if state else 'OFF'}")
+
+
+def _apply_maintenance_mixing_fan(active: bool):
+    state = bool(active)
+    _maintenance_components["mixing_fan"] = state
+    if isRpiPresent and GPIO is not None:
+        GPIO.output(mixerPin, GPIO.LOW if state else GPIO.HIGH)
+        print(f"[MAINTENANCE][RPI] mixing fan (GPIO {mixerPin}) -> {'ON' if state else 'OFF'}")
+    else:
+        print(f"[MAINTENANCE][DUMMY] mixing fan -> {'ON' if state else 'OFF'}")
+
+
+def enter_maintenance_mode() -> dict:
+    """
+    Enter isolated maintenance mode:
+    - Snapshots all normal-mode hardware and automated control states.
+    - Cancels pending automated timers (mixer shutdown, pump start/stop) so they do not fire.
+    - Pauses automated control loops until exit_maintenance_mode() is called.
+    Idempotent if already in maintenance mode (preserves original normal-mode snapshot).
+    """
+    global maintenanceModeActive, _maintenance_snapshot, _mixer_timer
+    with _maintenance_lock:
+        if maintenanceModeActive:
+            return get_maintenance_state()
+
+        # Cancel pending automated timers so they cannot override manual testing
+        with _mixer_lock:
+            if _mixer_timer is not None:
+                try:
+                    _mixer_timer.cancel()
+                except Exception:
+                    pass
+                _mixer_timer = None
+        cancel_pump_timers()
+
+        normal_components = _current_normal_component_states()
+        _maintenance_snapshot = {
+            "components": dict(normal_components),
+            "heatingSystemActive": bool(heatingSystemActive),
+            "coolingSystemActive": bool(coolingSystemActive),
+            "heaterActive": bool(heaterActive),
+            "heatingValveOpen": bool(heatingValveOpen),
+            "coolingValveOpen": bool(coolingValveOpen),
+            "heatingPumpActive": bool(heatingPumpActive),
+            "coolingPumpActive": bool(coolingPumpActive),
+            "mixerActive": bool(mixerActive),
+            "mixingFanActive": bool(mixingFanActive),
+            "dosvcounter": int(_dosvcounter),
+            "doSolenoidValveOpen": bool(doSolenoidValveOpen),
+            "aeratorFanActive": bool(aeratorFanActive),
+            "last_temp_system": last_temp_system,
+            "_heating_disabled_by_mixing": bool(_heating_disabled_by_mixing),
+            "_cooling_disabled_by_mixing": bool(_cooling_disabled_by_mixing),
+            "_heating_pump_cooldown_active": bool(_heating_pump_cooldown_active),
+        }
+
+        _maintenance_components.clear()
+        _maintenance_components.update(normal_components)
+        maintenanceModeActive = True
+        print("[MAINTENANCE] Entered maintenance mode - automated controls paused, normal state snapshotted")
+        return get_maintenance_state()
+
+
+def exit_maintenance_mode() -> dict:
+    """
+    Exit maintenance mode and revert all physical hardware states and software flags
+    back to the exact pre-maintenance normal-mode snapshot.
+    """
+    global maintenanceModeActive, _maintenance_snapshot
+    global heatingSystemActive, coolingSystemActive, heaterActive
+    global heatingValveOpen, coolingValveOpen
+    global heatingPumpActive, coolingPumpActive, mixerActive, mixingFanActive
+    global _dosvcounter, doSolenoidValveOpen, aeratorFanActive, aeratorCoolerFanActive
+    global last_temp_system, _heating_disabled_by_mixing, _cooling_disabled_by_mixing
+    global _heating_pump_cooldown_active
+
+    with _maintenance_lock:
+        if not maintenanceModeActive:
+            return get_maintenance_state()
+
+        snapshot = _maintenance_snapshot or {}
+        saved = snapshot.get("components", _current_normal_component_states())
+
+        # 1. Revert stepper valves physically ONLY if their physical position changed
+        _apply_maintenance_heating_valve(saved["heating_valve"])
+        _apply_maintenance_cooling_valve(saved["cooling_valve"])
+
+        # 2. Revert heater relay
+        _apply_maintenance_heater(saved["heater"])
+
+        # 3. Revert all 8 peltier modules
+        _apply_maintenance_peltiers(saved["peltiers"])
+
+        # 4. Revert aerator solenoid valves 1 & 2
+        _apply_maintenance_aerator_valve(1, saved["aerator_valve_1"])
+        _apply_maintenance_aerator_valve(2, saved["aerator_valve_2"])
+
+        # 5. Revert heating & cooling tank water pumps
+        _apply_maintenance_heating_pump(saved["heating_pump"])
+        _apply_maintenance_cooling_pump(saved["cooling_pump"])
+
+        # 6. Revert mixing fan
+        _apply_maintenance_mixing_fan(saved["mixing_fan"])
+
+        # 7. Restore normal-mode software state variables from snapshot
+        heatingSystemActive = snapshot.get("heatingSystemActive", False)
+        coolingSystemActive = snapshot.get("coolingSystemActive", saved["peltiers"])
+        heaterActive = snapshot.get("heaterActive", saved["heater"])
+        heatingValveOpen = snapshot.get("heatingValveOpen", saved["heating_valve"])
+        coolingValveOpen = snapshot.get("coolingValveOpen", saved["cooling_valve"])
+        heatingPumpActive = snapshot.get("heatingPumpActive", saved["heating_pump"])
+        coolingPumpActive = snapshot.get("coolingPumpActive", saved["cooling_pump"])
+        mixerActive = snapshot.get("mixerActive", saved["mixing_fan"])
+        mixingFanActive = snapshot.get("mixingFanActive", saved["mixing_fan"])
+        _dosvcounter = snapshot.get("dosvcounter", _dosvcounter)
+        doSolenoidValveOpen = snapshot.get("doSolenoidValveOpen", _dosvcounter > 0)
+        aeratorFanActive = snapshot.get("aeratorFanActive", _dosvcounter > 0)
+        aeratorCoolerFanActive = aeratorFanActive
+        last_temp_system = snapshot.get("last_temp_system", last_temp_system)
+        _heating_disabled_by_mixing = snapshot.get("_heating_disabled_by_mixing", False)
+        _cooling_disabled_by_mixing = snapshot.get("_cooling_disabled_by_mixing", False)
+        _heating_pump_cooldown_active = snapshot.get("_heating_pump_cooldown_active", False)
+
+        maintenanceModeActive = False
+        _maintenance_snapshot = None
+        print("[MAINTENANCE] Exited maintenance mode - all component states reverted to normal operation")
+        return get_maintenance_state()
+
+
+def set_maintenance_component(component: str, state: bool) -> dict:
+    """
+    Manually control an individual hardware component while in maintenance mode.
+    Supported components:
+      - 'heater'            : ON (True) / OFF (False)
+      - 'heating_valve'     : OPEN (True) / CLOSED (False)
+      - 'cooling_valve'     : OPEN (True) / CLOSED (False)
+      - 'peltiers'          : ON (True) / OFF (False) for all 8 peltier modules at once
+      - 'aerator_valve_1'   : OPEN (True) / CLOSED (False) for 1st aerator solenoid valve
+      - 'aerator_valve_2'   : OPEN (True) / CLOSED (False) for 2nd aerator solenoid valve
+      - 'aerator_valves_both': OPEN (True) / CLOSED (False) for both aerator solenoid valves
+      - 'heating_pump'      : ON (True) / OFF (False) for heating tank water pump
+      - 'cooling_pump'      : ON (True) / OFF (False) for cooling tank water pump
+      - 'mixing_fan'        : ON (True) / OFF (False) for mixing fan
+    """
+    with _maintenance_lock:
+        if not maintenanceModeActive:
+            raise RuntimeError("Maintenance mode is not active")
+
+        desired = bool(state)
+        if component == "heater":
+            _apply_maintenance_heater(desired)
+        elif component == "heating_valve":
+            _apply_maintenance_heating_valve(desired)
+        elif component == "cooling_valve":
+            _apply_maintenance_cooling_valve(desired)
+        elif component == "peltiers":
+            _apply_maintenance_peltiers(desired)
+        elif component == "aerator_valve_1":
+            _apply_maintenance_aerator_valve(1, desired)
+        elif component == "aerator_valve_2":
+            _apply_maintenance_aerator_valve(2, desired)
+        elif component in ("aerator_valves_both", "aerator_both"):
+            _apply_maintenance_aerator_valve(1, desired)
+            _apply_maintenance_aerator_valve(2, desired)
+        elif component == "heating_pump":
+            _apply_maintenance_heating_pump(desired)
+        elif component == "cooling_pump":
+            _apply_maintenance_cooling_pump(desired)
+        elif component == "mixing_fan":
+            _apply_maintenance_mixing_fan(desired)
+        else:
+            raise ValueError(f"Unknown maintenance component: {component}")
+
+        return get_maintenance_state()
+
+
 def cleanupGpio():
     """
     Disable stepper motor driver (ENABLE pin HIGH), turn off heater relay,
-    cancel mixer timer, turn off mixer, and cleanup GPIO pins on shutdown.
+    cancel mixer and water pump timers, turn off pumps and mixer, and cleanup GPIO pins on shutdown.
     """
-    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_thread, pigpio_pi, ledPwm, mosfet
+    global bleedValveDriverEnabled, _mixer_timer, heatingSystemActive, _heating_pump_cooldown_active
+    global pigpio_pi, ledPwm, mosfet, maintenanceModeActive, _maintenance_snapshot
+    maintenanceModeActive = False
+    _maintenance_snapshot = None
     if _mixer_timer is not None:
         try:
             _mixer_timer.cancel()
@@ -1382,12 +1991,15 @@ def cleanupGpio():
         except Exception:
             pass
 
+    cancel_pump_timers()
+    _heating_pump_cooldown_active = False
+
     with _heating_lock:
         heatingSystemActive = False
-        _heating_stop_event.set()
         _set_heater_relay(False)
-        _heating_thread = None
 
+    heatingPump(False)
+    coolingPump(False)
     coolingSystem(False)
     mixer(False)
     mainValve(False)
@@ -1412,12 +2024,17 @@ def cleanupGpio():
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting cooling peltiers: {e}")
         try:
-            print("[RPI] Closing aerator solenoid valves...")
+            print("[RPI] Closing aerator solenoid valves (2 valves)...")
             GPIO.output(doSolenoidValve1, GPIO.HIGH)
             GPIO.output(doSolenoidValve2, GPIO.HIGH)
-            GPIO.output(doSolenoidValve3, GPIO.HIGH)
         except Exception as e:
             logging.warning(f"[RPI] Exception while resetting aerator valves: {e}")
+        try:
+            print("[RPI] Turning off heating and cooling tank water pumps...")
+            GPIO.output(heatingPumpPin, GPIO.HIGH)
+            GPIO.output(coolingPumpPin, GPIO.HIGH)
+        except Exception as e:
+            logging.warning(f"[RPI] Exception while resetting water pumps: {e}")
         try:
             print("[RPI] Turning off heater relay and mixer...")
             GPIO.output(heatingSystemPin, GPIO.LOW)

@@ -14,9 +14,11 @@ from pathlib import Path
 W1_BASE_DIR = Path("/sys/bus/w1/devices")
 MAIN_TANK_DEVICE_ID = "28-000000b197bd"
 MIXING_TANK_DEVICE_ID = "28-000000b260f4"
+HEATING_TANK_DEVICE_ID = os.environ.get("HEATING_TANK_DEVICE_ID", "").strip() or "28-7cf4d4452c40"
 
 MAIN_TANK_DEVICE_FILE = W1_BASE_DIR / MAIN_TANK_DEVICE_ID / "w1_slave"
 MIXING_TANK_DEVICE_FILE = W1_BASE_DIR / MIXING_TANK_DEVICE_ID / "w1_slave"
+HEATING_TANK_DEVICE_FILE = W1_BASE_DIR / HEATING_TANK_DEVICE_ID / "w1_slave"
 
 
 def ensure_w1_kernel_modules():
@@ -57,7 +59,7 @@ def resolve_main_tank_device_file(custom_device_id: str | None = None) -> Path:
         return MAIN_TANK_DEVICE_FILE
 
     devices = discover_w1_sensors()
-    other_devices = [d for d in devices if d != MIXING_TANK_DEVICE_ID]
+    other_devices = [d for d in devices if d not in (MIXING_TANK_DEVICE_ID, HEATING_TANK_DEVICE_ID)]
     if other_devices:
         return W1_BASE_DIR / other_devices[0] / "w1_slave"
     if devices:
@@ -82,7 +84,7 @@ def resolve_mixing_tank_device_file(custom_device_id: str | None = None) -> Path
         return MIXING_TANK_DEVICE_FILE
 
     devices = discover_w1_sensors()
-    other_devices = [d for d in devices if d != MAIN_TANK_DEVICE_ID]
+    other_devices = [d for d in devices if d not in (MAIN_TANK_DEVICE_ID, HEATING_TANK_DEVICE_ID)]
     if other_devices:
         return W1_BASE_DIR / other_devices[0] / "w1_slave"
     if devices:
@@ -164,6 +166,30 @@ def read_main_tank_temp(device_file: Path | str | None = None, device_id: str | 
     return read_ds18b20(target_file)
 
 
+def resolve_heating_tank_device_file(custom_device_id: str | None = None) -> Path | None:
+    """
+    Resolves the heating tank DS18B20 w1_slave file path.
+    1. If custom_device_id is provided, uses that.
+    2. If HEATING_TANK_DEVICE_FILE is configured and exists, returns that.
+    3. Auto-discovers any connected 28-* device not assigned to main or mixing tank.
+    4. Returns HEATING_TANK_DEVICE_FILE (or None if not found).
+    """
+    if custom_device_id:
+        return W1_BASE_DIR / custom_device_id / "w1_slave"
+
+    if HEATING_TANK_DEVICE_FILE is not None and HEATING_TANK_DEVICE_FILE.exists():
+        return HEATING_TANK_DEVICE_FILE
+
+    devices = discover_w1_sensors()
+    other_devices = [
+        d for d in devices if d not in (MAIN_TANK_DEVICE_ID, MIXING_TANK_DEVICE_ID)
+    ]
+    if other_devices:
+        return W1_BASE_DIR / other_devices[0] / "w1_slave"
+
+    return HEATING_TANK_DEVICE_FILE
+
+
 def read_mixing_tank_temp(device_file: Path | str | None = None, device_id: str | None = None) -> float | None:
     """
     Reads the temperature (°C) of the Mixing Tank DS18B20 sensor.
@@ -176,4 +202,21 @@ def read_mixing_tank_temp(device_file: Path | str | None = None, device_id: str 
     else:
         target_file = resolve_mixing_tank_device_file()
 
+    return read_ds18b20(target_file)
+
+
+def read_heating_tank_temp(device_file: Path | str | None = None, device_id: str | None = None) -> float | None:
+    """
+    Reads the temperature (°C) of the Heating Tank DS18B20 sensor.
+    Supports overriding device file or ID, with auto-discovery fallback.
+    """
+    if device_file is not None:
+        target_file = Path(device_file)
+    elif device_id is not None:
+        target_file = W1_BASE_DIR / device_id / "w1_slave"
+    else:
+        target_file = resolve_heating_tank_device_file()
+
+    if target_file is None:
+        return None
     return read_ds18b20(target_file)

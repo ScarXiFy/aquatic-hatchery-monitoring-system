@@ -30,10 +30,7 @@ class TestTempDebounceAndDoControl(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
 
         simulator.current_temp = 26.0
         simulator.current_do = 7.2
@@ -49,10 +46,7 @@ class TestTempDebounceAndDoControl(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
 
         self.app_context.pop()
 
@@ -79,9 +73,9 @@ class TestTempDebounceAndDoControl(unittest.TestCase):
         self.assertEqual(piUtils.doBleedValvePercent, 100.0)
 
         # Re-open valves to test upper boundary within 0.3 deviation (7.45 mg/L)
-        piUtils.setDoSolenoidValveCount(3)
+        piUtils.setDoSolenoidValveCount(2)
         piUtils.doBleedValve(0.0)
-        self.assertEqual(piUtils._dosvcounter, 3)
+        self.assertEqual(piUtils._dosvcounter, 2)
         piUtils.applyDissolvedOxygenControl(do_level=7.45, setpoint=7.2, tolerance=0.3)
         self.assertEqual(piUtils._dosvcounter, 0)
         self.assertFalse(piUtils.doSolenoidValveOpen)

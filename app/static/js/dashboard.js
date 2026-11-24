@@ -10,6 +10,7 @@
   const thresholdSaveTimers = new Map();
   const controlState = {
     temperature_setpoint: 26,
+    heating_tank_setpoint: 40,
     dissolved_oxygen_setpoint: 7.2,
     led_intensity: 1000,
   };
@@ -1139,6 +1140,35 @@
     );
   }
 
+  const HEATING_TANK_MIN = 27;
+  const HEATING_TANK_MAX = 40;
+
+  function syncHeatingTankSliderBounds(mainTempValue) {
+    const heatingTankSlider = document.querySelector('[data-control-slider="heating_tank_setpoint"]');
+    if (!heatingTankSlider) return;
+    const mainTemp = Number(mainTempValue);
+    const minAllowed = Math.min(
+      HEATING_TANK_MAX,
+      Math.max(HEATING_TANK_MIN, Number.isNaN(mainTemp) ? HEATING_TANK_MIN : Math.floor(mainTemp) + 1)
+    );
+    heatingTankSlider.min = String(minAllowed);
+    heatingTankSlider.max = String(HEATING_TANK_MAX);
+    const minLabel = document.getElementById("heating_tank_setpoint-min");
+    if (minLabel) {
+      minLabel.textContent = `${minAllowed}°C`;
+    }
+    const currentVal = Number(heatingTankSlider.value);
+    if (Number.isNaN(currentVal) || currentVal < minAllowed) {
+      heatingTankSlider.value = String(minAllowed);
+      controlState.heating_tank_setpoint = minAllowed;
+      updateSliderOutput(heatingTankSlider);
+    } else if (currentVal > HEATING_TANK_MAX) {
+      heatingTankSlider.value = String(HEATING_TANK_MAX);
+      controlState.heating_tank_setpoint = HEATING_TANK_MAX;
+      updateSliderOutput(heatingTankSlider);
+    }
+  }
+
   function updateSliders(sliders, serverSetpointTimes = null, serverIsSystemStart = null) {
     if (!sliders) return;
     const tempSlider = document.querySelector('[data-control-slider="temperature_setpoint"]');
@@ -1146,6 +1176,14 @@
       tempSlider.value = sliders.temperature_setpoint;
       updateControlState(tempSlider, false);
       updateSliderOutput(tempSlider);
+      syncHeatingTankSliderBounds(sliders.temperature_setpoint);
+    }
+    const heatingTankSlider = document.querySelector('[data-control-slider="heating_tank_setpoint"]');
+    if (heatingTankSlider && sliders.heating_tank_setpoint !== undefined) {
+      heatingTankSlider.value = sliders.heating_tank_setpoint;
+      syncHeatingTankSliderBounds(controlState.temperature_setpoint);
+      updateControlState(heatingTankSlider, false);
+      updateSliderOutput(heatingTankSlider);
     }
     const doSlider = document.querySelector('[data-control-slider="dissolved_oxygen_setpoint"]');
     if (doSlider && sliders.dissolved_oxygen_setpoint !== undefined) {
@@ -1346,7 +1384,7 @@
 
   function sliderDisplay(slider) {
     const key = slider.dataset.controlSlider;
-    if (key === "temperature_setpoint") {
+    if (key === "temperature_setpoint" || key === "heating_tank_setpoint") {
       const val = Number(slider.value);
       return val % 1 === 0 ? `${val}°C` : `${val.toFixed(1)}°C`;
     }
@@ -1373,6 +1411,7 @@
     controlState[key] = value;
 
     if (key === "temperature_setpoint") {
+      syncHeatingTankSliderBounds(value);
       if (recordChange) {
         recordSetpointChange("temperature", value);
       }

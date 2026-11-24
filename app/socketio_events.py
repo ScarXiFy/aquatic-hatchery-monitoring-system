@@ -59,6 +59,8 @@ def register_socketio_events(socketio):
             socketio.emit("thresholds_updated", {
                 "thresholds": thresholds_data
             }, to=sid)
+            from app.api.piUtils import get_maintenance_state
+            socketio.emit("maintenance_updated", get_maintenance_state(), to=sid)
         except Exception:
             pass
         start_background_simulator(socketio)

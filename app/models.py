@@ -32,6 +32,10 @@ DEFAULT_CALIBRATIONS = {
         "slope": 1.0,
         "offset": 0.0,
     },
+    "heating_temp": {
+        "slope": 1.0,
+        "offset": 0.0,
+    },
 }
 
 SENSOR_TABLE_MAP = {
@@ -40,6 +44,7 @@ SENSOR_TABLE_MAP = {
     "salinity": "salinity_calibration",
     "temp": "temp_calibration",
     "mixing_temp": "mixing_temp_calibration",
+    "heating_temp": "heating_temp_calibration",
 }
 
 SENSOR_NORMALIZATION = {
@@ -58,6 +63,12 @@ SENSOR_NORMALIZATION = {
     "mixing": "mixing_temp",
     "mixing_tank_temp": "mixing_temp",
     "mixing_temperature": "mixing_temp",
+    "heating_temp": "heating_temp",
+    "temp_heating": "heating_temp",
+    "heating": "heating_temp",
+    "heating_tank_temp": "heating_temp",
+    "heating_tank_temperature": "heating_temp",
+    "heating_temperature": "heating_temp",
 }
 
 SENSOR_LIMITS = {
@@ -66,7 +77,30 @@ SENSOR_LIMITS = {
     "salinity": (0.0, 50.0),
     "temp": (0.0, 60.0),
     "mixing_temp": (0.0, 60.0),
+    "heating_temp": (0.0, 100.0),
 }
+
+SALINITY_TEMP_ALPHA = 0.02  # Standard aquatic EC temperature coefficient (per °C)
+SALINITY_REF_TEMP_C = 25.0
+
+
+def normalize_salinity_voltage_to_25c(
+    raw_voltage: float,
+    temp_c: float = None,
+    alpha: float = SALINITY_TEMP_ALPHA,
+) -> float:
+    """
+    Normalizes a raw salinity/EC sensor voltage reading to 25°C:
+        V_25 = V_raw / (1 + alpha * (T - 25))
+    where T is the temperature (°C) from the Main Tank DS18B20 sensor.
+    """
+    v_raw = float(raw_voltage)
+    if temp_c is None:
+        return v_raw
+    denom = 1.0 + float(alpha) * (float(temp_c) - SALINITY_REF_TEMP_C)
+    if abs(denom) < 1e-6:
+        return v_raw
+    return v_raw / denom
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +144,17 @@ def ensure_default_calibrations(db=None):
             )
             """
         )
+
+    # Ensure raw_sensor_readings has heating_tank_temperature column on existing DBs
+    try:
+        cols = {
+            r["name"]
+            for r in db.execute("PRAGMA table_info(raw_sensor_readings)").fetchall()
+        }
+        if cols and "heating_tank_temperature" not in cols:
+            db.execute("ALTER TABLE raw_sensor_readings ADD COLUMN heating_tank_temperature REAL")
+    except Exception:
+        pass
 
     for sensor, defaults in DEFAULT_CALIBRATIONS.items():
         row = db.execute(
@@ -282,6 +327,10 @@ def apply_calibration(sensor: str, raw_value: float, calibrations: dict = None, 
         slope = cal["slope"]
         offset = cal["offset"]
 
+    # Normalize salinity voltage to 25°C using the Main Tank DS18B20 temperature
+    if norm_sensor == "salinity" and temp_c is not None:
+        raw_val = normalize_salinity_voltage_to_25c(raw_val, temp_c)
+
     # Linear calibration equation
     val = slope * raw_val + offset
 
@@ -315,13 +364,24 @@ def row_to_reading(row, calibrations=None):
         if ("mixing_temperature" in row.keys() and row["mixing_temperature"] is not None)
         else 26.0
     )
+    raw_heating = (
+        float(row["heating_tank_temperature"])
+        if ("heating_tank_temperature" in row.keys() and row["heating_tank_temperature"] is not None)
+        else None
+    )
 
     # Calibrate values using the most recent equations in the database
     cal_temp = apply_calibration("temp", raw_temp, calibrations)
     cal_do = apply_calibration("do", raw_do, calibrations)
+    salinity_v25 = round(normalize_salinity_voltage_to_25c(raw_sal, cal_temp), 4)
     cal_sal = apply_calibration("salinity", raw_sal, calibrations, temp_c=cal_temp)
     cal_ph = apply_calibration("ph", raw_ph, calibrations)
     cal_mix = apply_calibration("mixing_temp", raw_mix, calibrations)
+    cal_heating = (
+        apply_calibration("heating_temp", raw_heating, calibrations)
+        if raw_heating is not None
+        else None
+    )
 
     return {
         "id": row["id"],
@@ -332,18 +392,24 @@ def row_to_reading(row, calibrations=None):
         "salinity": cal_sal,
         "ph": cal_ph,
         "mixing_temperature": cal_mix,
+        "heating_tank_temperature": cal_heating,
+        # Salinity voltage normalized to 25°C using Main Tank DS18B20 temperature
+        "salinity_voltage_25c": salinity_v25,
+        "salinity_temp_c": cal_temp,
         # Raw sensor readings stored in DB (voltages for analog, temp in °C for digital)
         "raw_temperature": raw_temp,
         "raw_dissolved_oxygen": raw_do,
         "raw_salinity": raw_sal,
         "raw_ph": raw_ph,
         "raw_mixing_temperature": raw_mix,
+        "raw_heating_tank_temperature": raw_heating,
         "raw": {
             "temperature": raw_temp,
             "dissolved_oxygen": raw_do,
             "salinity": raw_sal,
             "ph": raw_ph,
             "mixing_temperature": raw_mix,
+            "heating_tank_temperature": raw_heating,
         },
     }
 
@@ -379,6 +445,9 @@ def create_sensor_reading(reading):
     raw_mix = reading.get("raw_mixing_temperature", reading.get("mixing_temperature", 26.0))
     if raw_mix is not None:
         raw_mix = float(raw_mix)
+    raw_heating = reading.get("raw_heating_tank_temperature", reading.get("heating_tank_temperature"))
+    if raw_heating is not None:
+        raw_heating = float(raw_heating)
     timestamp = reading.get("timestamp") or datetime.now(timezone.utc).isoformat(timespec="seconds")
 
     cursor = db.execute(
@@ -389,11 +458,12 @@ def create_sensor_reading(reading):
             dissolved_oxygen,
             salinity,
             ph,
-            mixing_temperature
+            mixing_temperature,
+            heating_tank_temperature
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (timestamp, raw_temp, raw_do, raw_sal, raw_ph, raw_mix),
+        (timestamp, raw_temp, raw_do, raw_sal, raw_ph, raw_mix, raw_heating),
     )
     db.commit()
     row_id = cursor.lastrowid
@@ -404,9 +474,15 @@ def create_sensor_reading(reading):
     # Calculate calibrated values using DB equations
     cal_temp = apply_calibration("temp", raw_temp, calibrations)
     cal_do = apply_calibration("do", raw_do, calibrations)
+    salinity_v25 = round(normalize_salinity_voltage_to_25c(raw_sal, cal_temp), 4)
     cal_sal = apply_calibration("salinity", raw_sal, calibrations, temp_c=cal_temp)
     cal_ph = apply_calibration("ph", raw_ph, calibrations)
     cal_mix = apply_calibration("mixing_temp", raw_mix if raw_mix is not None else 26.0, calibrations)
+    cal_heating = (
+        apply_calibration("heating_temp", raw_heating, calibrations)
+        if raw_heating is not None
+        else None
+    )
 
     return {
         "id": row_id,
@@ -416,17 +492,22 @@ def create_sensor_reading(reading):
         "salinity": cal_sal,
         "ph": cal_ph,
         "mixing_temperature": cal_mix,
+        "heating_tank_temperature": cal_heating,
+        "salinity_voltage_25c": salinity_v25,
+        "salinity_temp_c": cal_temp,
         "raw_temperature": raw_temp,
         "raw_dissolved_oxygen": raw_do,
         "raw_salinity": raw_sal,
         "raw_ph": raw_ph,
         "raw_mixing_temperature": raw_mix,
+        "raw_heating_tank_temperature": raw_heating,
         "raw": {
             "temperature": raw_temp,
             "dissolved_oxygen": raw_do,
             "salinity": raw_sal,
             "ph": raw_ph,
             "mixing_temperature": raw_mix,
+            "heating_tank_temperature": raw_heating,
         },
     }
 
@@ -442,7 +523,7 @@ def get_latest_reading():
     try:
         row = db.execute(
             """
-            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature
+            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature, heating_tank_temperature
             FROM raw_sensor_readings
             ORDER BY timestamp DESC, id DESC
             LIMIT 1
@@ -510,7 +591,7 @@ def get_history(range_name="day", mode="last_24h"):
     try:
         rows = db.execute(
             """
-            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature
+            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature, heating_tank_temperature
             FROM raw_sensor_readings
             WHERE timestamp >= ?
               AND timestamp <= ?
@@ -627,7 +708,7 @@ def get_yesterday_or_last_day():
     try:
         rows = db.execute(
             """
-            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature
+            SELECT id, timestamp, temperature, dissolved_oxygen, salinity, ph, mixing_temperature, heating_tank_temperature
             FROM raw_sensor_readings
             WHERE timestamp >= ?
               AND timestamp <= ?
@@ -686,13 +767,15 @@ def get_control_settings():
     rows = db.execute(
         """
         SELECT metric, min_value FROM thresholds 
-        WHERE metric IN ('temperature', 'dissolved_oxygen', 'led_intensity')
+        WHERE metric IN ('temperature', 'heating_tank_temperature', 'dissolved_oxygen', 'led_intensity')
         """
     ).fetchall()
     res = {}
     for row in rows:
         if row["metric"] == "temperature":
             res["temperature_setpoint"] = row["min_value"]
+        elif row["metric"] == "heating_tank_temperature":
+            res["heating_tank_setpoint"] = row["min_value"]
         elif row["metric"] == "dissolved_oxygen":
             res["dissolved_oxygen_setpoint"] = row["min_value"]
         elif row["metric"] == "led_intensity":
@@ -706,6 +789,15 @@ def update_control_settings(updates):
         if metric == "temperature_setpoint":
             db.execute(
                 "UPDATE thresholds SET min_value = ?, max_value = ? WHERE metric = 'temperature'",
+                (float(value), float(value)),
+            )
+        elif metric == "heating_tank_setpoint":
+            db.execute(
+                """
+                INSERT INTO thresholds (metric, min_value, max_value)
+                VALUES ('heating_tank_temperature', ?, ?)
+                ON CONFLICT(metric) DO UPDATE SET min_value = excluded.min_value, max_value = excluded.max_value
+                """,
                 (float(value), float(value)),
             )
         elif metric == "dissolved_oxygen_setpoint":
@@ -730,6 +822,13 @@ def init_system_controls():
     db = get_db()
     ensure_default_thresholds()
     ensure_default_calibrations(db)
+
+    ht_row = db.execute("SELECT 1 FROM thresholds WHERE metric = 'heating_tank_temperature'").fetchone()
+    if not ht_row:
+        db.execute(
+            "INSERT INTO thresholds (metric, min_value, max_value) VALUES ('heating_tank_temperature', 40.0, 40.0)"
+        )
+        db.commit()
 
     row = db.execute("SELECT 1 FROM thresholds WHERE metric = 'led_intensity'").fetchone()
     if row:

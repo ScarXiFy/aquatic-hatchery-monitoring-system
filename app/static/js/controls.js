@@ -2,7 +2,7 @@ const LED_LEVELS = [0, 100, 500, 1000, 3000];
 
 function formatControlValue(slider) {
   const key = slider.dataset.controlSlider;
-  if (key === "temperature_setpoint") {
+  if (key === "temperature_setpoint" || key === "heating_tank_setpoint") {
     return `${Number(slider.value).toFixed(0)}°C`;
   }
   if (key === "dissolved_oxygen_setpoint") {
@@ -41,11 +41,52 @@ async function sendSliderState() {
   });
 }
 
+const HEATING_TANK_MIN = 27;
+const HEATING_TANK_MAX = 40;
+
+function syncHeatingTankSliderBounds(mainTempValue) {
+  const heatingSlider = document.querySelector('[data-control-slider="heating_tank_setpoint"]');
+  if (!heatingSlider) {
+    return;
+  }
+  const mainTemp = Number(mainTempValue);
+  const minAllowed = Math.min(
+    HEATING_TANK_MAX,
+    Math.max(HEATING_TANK_MIN, Number.isNaN(mainTemp) ? HEATING_TANK_MIN : Math.floor(mainTemp) + 1)
+  );
+  heatingSlider.min = String(minAllowed);
+  heatingSlider.max = String(HEATING_TANK_MAX);
+  const minLabel = document.getElementById("heating_tank_setpoint-min");
+  if (minLabel) {
+    minLabel.textContent = `${minAllowed}°C`;
+  }
+  const currentVal = Number(heatingSlider.value);
+  if (Number.isNaN(currentVal) || currentVal < minAllowed) {
+    heatingSlider.value = String(minAllowed);
+    updateSliderOutput(heatingSlider);
+  } else if (currentVal > HEATING_TANK_MAX) {
+    heatingSlider.value = String(HEATING_TANK_MAX);
+    updateSliderOutput(heatingSlider);
+  }
+}
+
 function initializeSliders() {
+  const tempSlider = document.querySelector('[data-control-slider="temperature_setpoint"]');
+  if (tempSlider) {
+    syncHeatingTankSliderBounds(tempSlider.value);
+  }
   document.querySelectorAll("[data-control-slider]").forEach((slider) => {
     updateSliderOutput(slider);
-    slider.addEventListener("input", () => updateSliderOutput(slider));
+    slider.addEventListener("input", () => {
+      if (slider.dataset.controlSlider === "temperature_setpoint") {
+        syncHeatingTankSliderBounds(slider.value);
+      }
+      updateSliderOutput(slider);
+    });
     slider.addEventListener("change", () => {
+      if (slider.dataset.controlSlider === "temperature_setpoint") {
+        syncHeatingTankSliderBounds(slider.value);
+      }
       updateSliderOutput(slider);
       sendSliderState();
     });

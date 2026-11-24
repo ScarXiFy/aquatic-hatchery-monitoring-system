@@ -23,15 +23,15 @@ class TestMixerAndHeating(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
 
         piUtils.coolingSystemActive = False
         piUtils.heatingSystemActive = False
         piUtils.mixerActive = False
         piUtils.heaterActive = False
+        piUtils.heatingPumpActive = False
+        piUtils.coolingPumpActive = False
+        piUtils.reset_temperature_control_state()
 
     def tearDown(self):
         piUtils.coolingSystem(False)
@@ -40,10 +40,9 @@ class TestMixerAndHeating(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
+        piUtils.heatingPump(False)
+        piUtils.coolingPump(False)
 
         self.app_context.pop()
 
@@ -133,61 +132,31 @@ class TestMixerAndHeating(unittest.TestCase):
         finally:
             piUtils.MIXER_SHUTDOWN_DELAY = orig_delay
 
-    def test_heater_pulse_and_periodic_recheck(self):
+    def test_heater_sensor_based_activation_and_deactivation(self):
         """
-        Test that when heating is needed:
-        1. Heater relay activates for 5s (shortened for test), then immediately disables.
-        2. After 45s (shortened for test), if heating is still needed, heater activates again.
-        3. When heating is disabled, heater stops and no further pulses occur.
+        Test sensor-based heater control (replaces timed pulse intervals):
+        1. When heating tank sensor temp < setpoint, heater relay activates to add heat.
+        2. When heating tank sensor temp >= setpoint, heater relay deactivates to cool down.
         """
-        orig_pulse = piUtils.HEATER_PULSE_DURATION
-        orig_interval = piUtils.HEATER_CHECK_INTERVAL
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertTrue(piUtils.heaterActive)
 
-        piUtils.HEATER_PULSE_DURATION = 0.05   # 50 ms
-        piUtils.HEATER_CHECK_INTERVAL = 0.10   # 100 ms
+        piUtils.applyHeatingTankControl(heating_tank_temp=39.9, setpoint=40.0)
+        self.assertTrue(piUtils.heaterActive)
 
-        try:
-            piUtils.heatingSystem(True)
-            self.assertTrue(piUtils.heatingSystemActive)
-            # Heater relay should be active immediately during pulse
-            self.assertTrue(self.wait_for(lambda: piUtils.heaterActive, timeout=0.1))
+        piUtils.applyHeatingTankControl(heating_tank_temp=40.0, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
 
-            # After pulse duration (50ms), heater relay should be disabled
-            self.assertTrue(self.wait_for(lambda: not piUtils.heaterActive, timeout=0.2))
+        piUtils.applyHeatingTankControl(heating_tank_temp=42.5, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
 
-            # Wait until 100ms check interval elapses and next pulse triggers
-            self.assertTrue(self.wait_for(lambda: piUtils.heaterActive, timeout=0.3))
+    def test_heater_stays_off_when_heating_tank_sensor_unavailable(self):
+        """Test that if heating tank sensor returns None, heater relay is safely turned OFF."""
+        piUtils.applyHeatingTankControl(heating_tank_temp=35.0, setpoint=40.0)
+        self.assertTrue(piUtils.heaterActive)
 
-            # Disable heating system
-            piUtils.heatingSystem(False)
-            self.assertFalse(piUtils.heatingSystemActive)
-            self.assertFalse(piUtils.heaterActive)
-
-            # Wait to ensure no further pulses occur
-            time.sleep(0.15)
-            self.assertFalse(piUtils.heaterActive)
-        finally:
-            piUtils.HEATER_PULSE_DURATION = orig_pulse
-            piUtils.HEATER_CHECK_INTERVAL = orig_interval
-
-    def test_heater_immediate_disable_when_heating_stops_during_pulse(self):
-        """Test that calling heatingSystem(False) during a pulse immediately disables the heater."""
-        orig_pulse = piUtils.HEATER_PULSE_DURATION
-        orig_interval = piUtils.HEATER_CHECK_INTERVAL
-        piUtils.HEATER_PULSE_DURATION = 0.5
-        piUtils.HEATER_CHECK_INTERVAL = 1.0
-
-        try:
-            piUtils.heatingSystem(True)
-            self.assertTrue(self.wait_for(lambda: piUtils.heaterActive, timeout=0.2))
-
-            # Stop heating during the pulse
-            piUtils.heatingSystem(False)
-            self.assertFalse(piUtils.heaterActive)
-            self.assertFalse(piUtils.heatingSystemActive)
-        finally:
-            piUtils.HEATER_PULSE_DURATION = orig_pulse
-            piUtils.HEATER_CHECK_INTERVAL = orig_interval
+        piUtils.applyHeatingTankControl(heating_tank_temp=None, setpoint=40.0)
+        self.assertFalse(piUtils.heaterActive)
 
     def test_rpi_gpio_mixer_and_heater_outputs(self):
         """Test GPIO pin outputs on RPi mode for mixerPin and heatingSystemPin."""

@@ -43,6 +43,7 @@ CONTROL_STATE = {
     },
     "sliders": {
         "temperature_setpoint": 26,
+        "heating_tank_setpoint": 40,
         "dissolved_oxygen_setpoint": 7.2,
         "led_intensity": 1000,
     },
@@ -154,19 +155,36 @@ def set_valve(name):
     return ("", 204)
 
 
+HEATING_TANK_MIN_SETPOINT = 27.0
+HEATING_TANK_MAX_SETPOINT = 40.0
+
+
+def _min_valid_heating_tank_setpoint(main_temp_setpoint: float) -> float:
+    return min(HEATING_TANK_MAX_SETPOINT, max(HEATING_TANK_MIN_SETPOINT, float(main_temp_setpoint) + 1.0))
+
+
 @api_bp.get("/controls")
 def get_controls():
     db_sliders = get_control_settings()
     defaults = {
         "temperature_setpoint": 26.0,
+        "heating_tank_setpoint": 40.0,
         "dissolved_oxygen_setpoint": 7.2,
-        "led_intensity": 1000.0
+        "led_intensity": 1000.0,
     }
     updated = False
     for key, default in defaults.items():
         if key not in db_sliders:
             db_sliders[key] = default
             updated = True
+
+    min_ht = _min_valid_heating_tank_setpoint(db_sliders["temperature_setpoint"])
+    cur_ht = float(db_sliders["heating_tank_setpoint"])
+    clamped_ht = max(min_ht, min(HEATING_TANK_MAX_SETPOINT, cur_ht))
+    if clamped_ht != cur_ht:
+        db_sliders["heating_tank_setpoint"] = clamped_ht
+        updated = True
+
     if updated:
         db_sliders = update_control_settings(db_sliders)
         
@@ -184,20 +202,52 @@ def set_sliders():
     payload = request.get_json(silent=True) or {}
     updates = {}
     now_ms = int(time.time() * 1000)
-    for key in ["temperature_setpoint", "dissolved_oxygen_setpoint", "led_intensity"]:
+    prev_sliders = get_control_settings()
+    for key in ["temperature_setpoint", "heating_tank_setpoint", "dissolved_oxygen_setpoint", "led_intensity"]:
         if key in payload:
             updates[key] = float(payload[key])
-            if key == "temperature_setpoint":
-                SETPOINT_UPDATED_AT["temperature"] = now_ms
-                IS_SYSTEM_START["temperature"] = False
-            elif key == "dissolved_oxygen_setpoint":
-                SETPOINT_UPDATED_AT["dissolved_oxygen"] = now_ms
-                IS_SYSTEM_START["dissolved_oxygen"] = False
+
+    effective_main_temp = float(
+        updates.get("temperature_setpoint", prev_sliders.get("temperature_setpoint", 26.0))
+    )
+
+    if "heating_tank_setpoint" in updates:
+        ht_val = updates["heating_tank_setpoint"]
+        if ht_val < HEATING_TANK_MIN_SETPOINT or ht_val > HEATING_TANK_MAX_SETPOINT:
+            return jsonify({
+                "error": f"heating_tank_setpoint must be between {int(HEATING_TANK_MIN_SETPOINT)} and {int(HEATING_TANK_MAX_SETPOINT)}"
+            }), 400
+        if ht_val <= effective_main_temp:
+            return jsonify({
+                "error": "heating_tank_setpoint must be higher than temperature_setpoint"
+            }), 400
+    elif "temperature_setpoint" in updates:
+        # If main tank setpoint was raised to/above the stored heating tank setpoint,
+        # automatically raise heating_tank_setpoint so it remains strictly higher.
+        prev_ht = float(prev_sliders.get("heating_tank_setpoint", HEATING_TANK_MAX_SETPOINT))
+        min_ht = _min_valid_heating_tank_setpoint(effective_main_temp)
+        if prev_ht < min_ht or prev_ht > HEATING_TANK_MAX_SETPOINT:
+            updates["heating_tank_setpoint"] = max(min_ht, min(HEATING_TANK_MAX_SETPOINT, prev_ht))
+
+    if "temperature_setpoint" in updates:
+        SETPOINT_UPDATED_AT["temperature"] = now_ms
+        IS_SYSTEM_START["temperature"] = False
+    if "dissolved_oxygen_setpoint" in updates:
+        SETPOINT_UPDATED_AT["dissolved_oxygen"] = now_ms
+        IS_SYSTEM_START["dissolved_oxygen"] = False
             
     if updates:
         db_sliders = update_control_settings(updates)
         if "led_intensity" in updates:
             piUtils.set_lux(updates["led_intensity"])
+        if "heating_tank_setpoint" in updates:
+            prev_ht = prev_sliders.get("heating_tank_setpoint")
+            if (
+                prev_ht is None
+                or float(prev_ht) != updates["heating_tank_setpoint"]
+                or set(updates.keys()) == {"heating_tank_setpoint"}
+            ):
+                piUtils.set_heating_tank_setpoint(updates["heating_tank_setpoint"])
     else:
         db_sliders = get_control_settings()
         
@@ -365,3 +415,66 @@ def reset_calibration(sensor):
         "message": f"Reset {norm_sensor} to starting default calibration",
         "calibration": cal,
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# Maintenance Mode API Endpoints
+# ---------------------------------------------------------------------------
+
+def _emit_maintenance_update(state):
+    try:
+        from app import socketio
+        if socketio:
+            socketio.emit("maintenance_updated", state)
+    except Exception:
+        pass
+
+
+@api_bp.get("/maintenance")
+def get_maintenance():
+    """Return current maintenance mode status and component states."""
+    return jsonify(piUtils.get_maintenance_state()), 200
+
+
+@api_bp.post("/maintenance/mode")
+def set_maintenance_mode():
+    """Enable or disable isolated maintenance mode (reverts states when disabling)."""
+    payload = request.get_json(silent=True) or {}
+    if "active" in payload:
+        enable = bool(payload["active"])
+    elif "enabled" in payload:
+        enable = bool(payload["enabled"])
+    else:
+        return jsonify({"error": "missing active boolean in payload"}), 400
+
+    state = piUtils.enter_maintenance_mode() if enable else piUtils.exit_maintenance_mode()
+    _emit_maintenance_update(state)
+    return jsonify(state), 200
+
+
+@api_bp.post("/maintenance/component")
+def set_maintenance_component_route():
+    """Manually control a component while maintenance mode is active."""
+    payload = request.get_json(silent=True) or {}
+    component = payload.get("component")
+    if not component or not isinstance(component, str):
+        return jsonify({"error": "component is required"}), 400
+
+    if "state" in payload:
+        desired = bool(payload["state"])
+    elif "open" in payload:
+        desired = bool(payload["open"])
+    elif "active" in payload:
+        desired = bool(payload["active"])
+    else:
+        return jsonify({"error": "state boolean is required"}), 400
+
+    try:
+        state = piUtils.set_maintenance_component(component.strip(), desired)
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 409
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    _emit_maintenance_update(state)
+    return jsonify(state), 200

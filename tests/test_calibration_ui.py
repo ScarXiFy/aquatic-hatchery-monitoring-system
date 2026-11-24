@@ -66,12 +66,36 @@ class TestCalibrationUI(unittest.TestCase):
         self.assertIn('data-sensor="salinity"', self.base_html)
         self.assertIn('data-sensor="temp"', self.base_html)
         self.assertIn('data-sensor="mixing_temp"', self.base_html)
+        self.assertIn('data-sensor="heating_temp"', self.base_html)
+        self.assertIn('value="heating_temp"', self.base_html)
+        self.assertIn("heating_temp:", self.calibration_js)
+        self.assertIn("28-7cf4d4452c40", self.calibration_js)
 
         self.assertIn(".calibration-sensor-buttons-row", self.dashboard_css)
         self.assertIn(".btn-sensor-select", self.dashboard_css)
 
         self.assertIn(".btn-sensor-select", self.calibration_js)
         self.assertIn('btn.addEventListener("click"', self.calibration_js)
+
+    def test_salinity_25c_normalization_and_main_tank_ds18b20_notice(self):
+        """Verify salinity calibration displays 25C-normalized voltage and instructs user to use Main Tank DS18B20."""
+        # Notice banner in base.html instructing user to use Main Tank DS18B20 in sample solution
+        self.assertIn('id="salinity-temp-comp-notice"', self.base_html)
+        self.assertIn('id="salinity-comp-temp"', self.base_html)
+        self.assertIn('id="salinity-comp-raw-v"', self.base_html)
+        self.assertIn("Main Tank DS18B20", self.base_html)
+        self.assertIn("sample solution", self.base_html)
+
+        # Normalization formula and Main Tank DS18B20 lookup in calibration.js
+        self.assertIn("function normalizeSalinityVoltageTo25C(rawVoltage, tempC)", self.calibration_js)
+        self.assertIn("const SALINITY_TEMP_ALPHA = 0.02;", self.calibration_js)
+        self.assertIn("function getMainTankTempForSalinity()", self.calibration_js)
+        self.assertIn("salinity_voltage_25c", self.calibration_js)
+        self.assertIn("Normalized Voltage at 25°C", self.calibration_js)
+        self.assertIn('salinityTempNotice.hidden = sensorKey !== "salinity"', self.calibration_js)
+
+        # CSS styling for the notice banner
+        self.assertIn(".salinity-temp-notice", self.dashboard_css)
 
 
 if __name__ == "__main__":

@@ -41,6 +41,11 @@ SENSOR_CONFIGS = {
         "label": "Mixing Tank Sensor",
         "default_device_id": "28-000000b260f4",
     },
+    "heating": {
+        "key": "heating",
+        "label": "Heating Tank Sensor",
+        "default_device_id": "28-7cf4d4452c40",
+    },
 }
 
 W1_BASE_DIR = Path("/sys/bus/w1/devices")

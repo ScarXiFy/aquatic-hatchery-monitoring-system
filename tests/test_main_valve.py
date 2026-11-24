@@ -25,10 +25,7 @@ class TestMainValve(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
 
         piUtils.coolingSystemActive = False
         piUtils.heatingSystemActive = False
@@ -46,10 +43,7 @@ class TestMainValve(unittest.TestCase):
         if piUtils._mixer_timer is not None:
             piUtils._mixer_timer.cancel()
             piUtils._mixer_timer = None
-        if piUtils._heating_thread is not None and piUtils._heating_thread.is_alive():
-            piUtils._heating_stop_event.set()
-            piUtils._heating_thread.join(timeout=1.0)
-            piUtils._heating_thread = None
+        piUtils.cancel_pump_timers()
 
         self.app_context.pop()
 

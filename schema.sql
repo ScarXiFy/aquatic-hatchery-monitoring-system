@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS raw_sensor_readings (
     dissolved_oxygen REAL NOT NULL,      -- Raw ADS1115 analog voltage (V)
     salinity REAL NOT NULL,              -- Raw ADS1115 analog voltage (V)
     ph REAL NOT NULL,                    -- Raw ADS1115 analog voltage (V)
-    mixing_temperature REAL              -- Raw DS18B20 secondary digital temperature (°C)
+    mixing_temperature REAL,             -- Raw DS18B20 secondary digital temperature (°C)
+    heating_tank_temperature REAL        -- Raw DS18B20 heating tank digital temperature (°C)
 );
 
 CREATE TABLE IF NOT EXISTS thresholds (
@@ -99,5 +100,13 @@ CREATE TABLE IF NOT EXISTS mixing_temp_calibration (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS heating_temp_calibration (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slope REAL NOT NULL,
+    offset REAL NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE VIEW IF NOT EXISTS temperature_calibration AS SELECT * FROM temp_calibration;
 CREATE VIEW IF NOT EXISTS mixing_temperature_calibration AS SELECT * FROM mixing_temp_calibration;
+CREATE VIEW IF NOT EXISTS heating_temperature_calibration AS SELECT * FROM heating_temp_calibration;
