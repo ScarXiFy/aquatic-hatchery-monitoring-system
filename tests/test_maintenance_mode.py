@@ -396,6 +396,7 @@ class TestMaintenanceModeAPIAndUI(unittest.TestCase):
         for token in expected_tokens:
             self.assertIn(token, html, f"Missing expected UI element: {token}")
 
+        self.assertNotIn('id="maintenance-mode-badge"', html)
         self.assertNotIn('id="maintenance-feedback"', html)
         self.assertNotIn('id="maintenance-banner-desc"', html)
 

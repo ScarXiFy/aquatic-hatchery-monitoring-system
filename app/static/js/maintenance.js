@@ -56,14 +56,6 @@
       topbarDot.hidden = !isActive;
     }
 
-    // Modal header badge
-    const modeBadge = getEl("maintenance-mode-badge");
-    if (modeBadge) {
-      modeBadge.textContent = isActive ? "Maintenance Active" : "Normal Mode";
-      modeBadge.classList.toggle("active", isActive);
-      modeBadge.classList.toggle("normal", !isActive);
-    }
-
     // Mode banner & master button
     const banner = getEl("maintenance-mode-banner");
     const bannerHeading = getEl("maintenance-banner-heading");
