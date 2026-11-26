@@ -1506,25 +1506,10 @@ input:focus-visible {
   100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
 }
 
-.sound-icon-wrap,
-.fullscreen-icon-wrap {
+.sound-icon-wrap {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.fullscreen-toggle-btn {
-  flex-shrink: 0;
-}
-
-.fullscreen-toggle-btn.is-fullscreen {
-  color: var(--teal);
-  background: rgba(13, 148, 136, 0.14);
-}
-
-.fullscreen-toggle-btn.is-fullscreen:hover {
-  color: var(--teal);
-  background: rgba(13, 148, 136, 0.22);
 }
 
 .sound-wave-anim path:nth-child(2),

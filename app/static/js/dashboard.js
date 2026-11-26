@@ -1842,57 +1842,39 @@
     const btn = document.getElementById("fullscreen-toggle-btn");
     if (!btn) return;
 
-    function getFullscreenElement() {
-      return document.fullscreenElement || document.webkitFullscreenElement || null;
-    }
-
     function updateFullscreenIcon() {
-      const isFullscreen = Boolean(getFullscreenElement());
-      const label = isFullscreen ? "Exit fullscreen" : "Enter fullscreen";
-      btn.title = label;
-      btn.setAttribute("aria-label", label);
-      btn.setAttribute("aria-pressed", String(isFullscreen));
-      btn.classList.toggle("is-fullscreen", isFullscreen);
+      const isFullscreen = Boolean(document.fullscreenElement);
+      btn.title = isFullscreen ? "Exit fullscreen" : "Toggle fullscreen";
+      btn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Toggle fullscreen");
       const wrap = btn.querySelector(".fullscreen-icon-wrap");
       if (wrap) {
         wrap.innerHTML = isFullscreen
-          ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          ? `<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/>
             </svg>`
-          : `<svg viewBox="0 0 24 24" aria-hidden="true" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          : `<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
             </svg>`;
       }
     }
 
     btn.addEventListener("click", () => {
-      if (!getFullscreenElement()) {
-        const root = document.documentElement;
-        const requestFs = root.requestFullscreen || root.webkitRequestFullscreen;
-        if (requestFs) {
-          const result = requestFs.call(root);
-          if (result && typeof result.catch === "function") {
-            result.catch((err) => {
-              console.warn("[FULLSCREEN] Error entering fullscreen:", err);
-            });
-          }
+      if (!document.fullscreenElement) {
+        if (document.documentElement.requestFullscreen) {
+          document.documentElement.requestFullscreen().catch((err) => {
+            console.warn("[FULLSCREEN] Error entering fullscreen:", err);
+          });
         }
       } else {
-        const exitFs = document.exitFullscreen || document.webkitExitFullscreen;
-        if (exitFs) {
-          const result = exitFs.call(document);
-          if (result && typeof result.catch === "function") {
-            result.catch((err) => {
-              console.warn("[FULLSCREEN] Error exiting fullscreen:", err);
-            });
-          }
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch((err) => {
+            console.warn("[FULLSCREEN] Error exiting fullscreen:", err);
+          });
         }
       }
     });
 
     document.addEventListener("fullscreenchange", updateFullscreenIcon);
-    document.addEventListener("webkitfullscreenchange", updateFullscreenIcon);
-    updateFullscreenIcon();
   }
 
   document.addEventListener("DOMContentLoaded", async () => {
