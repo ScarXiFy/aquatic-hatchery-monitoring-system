@@ -139,13 +139,29 @@
    * until the reading reaches within the setpoint. Once reached, adjusting ends,
    * and any subsequent deviation will trigger an alarm.
    */
-  function syncSetpointTimes(serverSetpointTimes, serverIsSystemStart = null) {
+  function syncSetpointTimes(serverSetpointTimes, serverIsSystemStart = null, serverSliders = null, serverAdjustingState = null) {
     if (!serverSetpointTimes) return;
+    const sliderKeys = {
+      temperature: "temperature_setpoint",
+      dissolved_oxygen: "dissolved_oxygen_setpoint",
+    };
     ["temperature", "dissolved_oxygen"].forEach((metric) => {
-      const serverTime = Number(serverSetpointTimes[metric]);
-      if (!serverTime || Number.isNaN(serverTime)) return;
       const tracker = setpointTrackers[metric];
       if (!tracker) return;
+
+      const sliderKey = sliderKeys[metric];
+      const prevTarget = tracker.targetSetpoint;
+      let targetChanged = false;
+      if (serverSliders && serverSliders[sliderKey] !== undefined) {
+        const numTarget = Number(serverSliders[sliderKey]);
+        if (!Number.isNaN(numTarget)) {
+          targetChanged = prevTarget !== numTarget;
+          tracker.targetSetpoint = numTarget;
+        }
+      }
+
+      const serverTime = Number(serverSetpointTimes[metric]);
+      if (!serverTime || Number.isNaN(serverTime)) return;
 
       const isSystemStart = Boolean(serverIsSystemStart && serverIsSystemStart[metric]);
       const isNewSetpointTime = tracker.startTime !== serverTime;
@@ -155,15 +171,57 @@
         ? Number(latestReading[metric])
         : null;
       const warning_limit = metric === "temperature" ? 1.0 : 0.5;
+      const hasServerAdjusting =
+        serverAdjustingState && typeof serverAdjustingState[metric] === "boolean";
 
       if (currentVal !== null && Math.abs(currentVal - tracker.targetSetpoint) < warning_limit) {
         tracker.active = false;
         tracker.isSystemStart = false;
         tracker.hasReachedSetpoint = true;
-      } else if (isNewSetpointTime) {
+        tracker.readings = [];
+        tracker.initialValue = null;
+      } else if (hasServerAdjusting) {
+        tracker.active = serverAdjustingState[metric];
+        tracker.isSystemStart = tracker.active ? isSystemStart : false;
+        tracker.hasReachedSetpoint = !tracker.active;
+        if (tracker.active) {
+          if (isNewSetpointTime || targetChanged) {
+            tracker.initialValue = currentVal;
+            tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: serverTime }] : [];
+            tracker.stalledCount = 0;
+            tracker.wrongDirectionCount = 0;
+            tracker.lastRate = 0;
+          }
+          activeAlertsMap.delete(metric);
+          dismissedAlertKeys.delete(`${metric}_WARNING`);
+          dismissedAlertKeys.delete(`${metric}_CRITICAL`);
+          dismissedAlertKeys.delete(`${metric}_Warning`);
+          dismissedAlertKeys.delete(`${metric}_Critical`);
+          if (window.HatcherySound) {
+            window.HatcherySound.updateAlarmState(activeAlertsMap);
+          }
+        } else {
+          tracker.readings = [];
+          tracker.initialValue = null;
+        }
+      } else if (isNewSetpointTime || targetChanged) {
         tracker.active = true;
         tracker.isSystemStart = isSystemStart;
         tracker.hasReachedSetpoint = false;
+        tracker.initialValue = currentVal;
+        tracker.readings = currentVal !== null ? [{ value: currentVal, timestamp: serverTime }] : [];
+        tracker.stalledCount = 0;
+        tracker.wrongDirectionCount = 0;
+        tracker.lastRate = 0;
+
+        activeAlertsMap.delete(metric);
+        dismissedAlertKeys.delete(`${metric}_WARNING`);
+        dismissedAlertKeys.delete(`${metric}_CRITICAL`);
+        dismissedAlertKeys.delete(`${metric}_Warning`);
+        dismissedAlertKeys.delete(`${metric}_Critical`);
+        if (window.HatcherySound) {
+          window.HatcherySound.updateAlarmState(activeAlertsMap);
+        }
       }
     });
     saveSetpointTrackers();
@@ -1169,8 +1227,23 @@
     }
   }
 
-  function updateSliders(sliders, serverSetpointTimes = null, serverIsSystemStart = null) {
+  function updateSliders(sliders, serverSetpointTimes = null, serverIsSystemStart = null, serverAdjustingState = null) {
     if (!sliders) return;
+    if (sliders.temperature_setpoint !== undefined && !Number.isNaN(Number(sliders.temperature_setpoint))) {
+      controlState.temperature_setpoint = Number(sliders.temperature_setpoint);
+      if (!serverSetpointTimes) {
+        setpointTrackers.temperature.targetSetpoint = Number(sliders.temperature_setpoint);
+      }
+    }
+    if (sliders.dissolved_oxygen_setpoint !== undefined && !Number.isNaN(Number(sliders.dissolved_oxygen_setpoint))) {
+      controlState.dissolved_oxygen_setpoint = Number(sliders.dissolved_oxygen_setpoint);
+      if (!serverSetpointTimes) {
+        setpointTrackers.dissolved_oxygen.targetSetpoint = Number(sliders.dissolved_oxygen_setpoint);
+      }
+    }
+    if (serverSetpointTimes) {
+      syncSetpointTimes(serverSetpointTimes, serverIsSystemStart, sliders, serverAdjustingState);
+    }
     const tempSlider = document.querySelector('[data-control-slider="temperature_setpoint"]');
     if (tempSlider && sliders.temperature_setpoint !== undefined) {
       tempSlider.value = sliders.temperature_setpoint;
@@ -1200,9 +1273,6 @@
       updateControlState(ledSlider, false);
       updateSliderOutput(ledSlider);
     }
-    if (serverSetpointTimes) {
-      syncSetpointTimes(serverSetpointTimes, serverIsSystemStart);
-    }
   }
 
   async function loadControls() {
@@ -1216,7 +1286,7 @@
         Object.entries(payload.sliders).forEach(([key, value]) => {
           controlState[key] = Number(value);
         });
-        updateSliders(payload.sliders, payload.setpoint_times, payload.is_system_start);
+        updateSliders(payload.sliders, payload.setpoint_times, payload.is_system_start, payload.adjusting_state);
       }
       if (payload.valves) {
         document.querySelectorAll("[data-valve]").forEach((button) => {
@@ -1414,6 +1484,8 @@
       syncHeatingTankSliderBounds(value);
       if (recordChange) {
         recordSetpointChange("temperature", value);
+      } else if (!Number.isNaN(Number(value))) {
+        setpointTrackers.temperature.targetSetpoint = Number(value);
       }
       const item = thresholds.find((t) => t.metric === "temperature");
       if (item) {
@@ -1429,6 +1501,8 @@
     } else if (key === "dissolved_oxygen_setpoint") {
       if (recordChange) {
         recordSetpointChange("dissolved_oxygen", value);
+      } else if (!Number.isNaN(Number(value))) {
+        setpointTrackers.dissolved_oxygen.targetSetpoint = Number(value);
       }
       const item = thresholds.find((t) => t.metric === "dissolved_oxygen");
       if (item) {
@@ -1464,7 +1538,7 @@
     if (response.ok) {
       const data = await response.json();
       if (data.sliders) {
-        updateSliders(data.sliders, data.setpoint_times, data.is_system_start);
+        updateSliders(data.sliders, data.setpoint_times, data.is_system_start, data.adjusting_state);
       }
     }
   }
@@ -1559,7 +1633,7 @@
         Object.entries(data.sliders).forEach(([key, value]) => {
           controlState[key] = Number(value);
         });
-        updateSliders(data.sliders, data.setpoint_times, data.is_system_start);
+        updateSliders(data.sliders, data.setpoint_times, data.is_system_start, data.adjusting_state);
         if (data.sliders.temperature_setpoint !== undefined) {
           const tItem = thresholds.find((t) => t.metric === "temperature");
           if (tItem) {
@@ -1599,8 +1673,10 @@
       thresholds.forEach((item) => {
         if (item.metric === "temperature" && item.min_value !== undefined) {
           controlState.temperature_setpoint = Number(item.min_value);
+          setpointTrackers.temperature.targetSetpoint = Number(item.min_value);
         } else if (item.metric === "dissolved_oxygen" && item.min_value !== undefined) {
           controlState.dissolved_oxygen_setpoint = Number(item.min_value);
+          setpointTrackers.dissolved_oxygen.targetSetpoint = Number(item.min_value);
         }
       });
       if (!isEditingThresholds()) {

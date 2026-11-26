@@ -17,7 +17,7 @@ from app.api.piUtils import (
     read_heating_tank_temp_sensor,
     isRpiPresent,
 )
-from app.api.routes import CONTROL_STATE
+from app.api.routes import CONTROL_STATE, update_adjusting_state_for_reading
 
 current_temp = None
 current_heating_tank_temp = None
@@ -249,12 +249,13 @@ def start_sensor_simulator(socketio, app):
             if heating_tank_temp is None:
                 heating_tank_temp = raw_reading.get("heating_tank_temperature")
                 reading["heating_tank_temperature"] = heating_tank_temp
-            socketio.emit("sensor_update", reading)
-
             # Keep CONTROL_STATE sliders updated for any other parts of the app
             targets = get_control_settings()
             for key, val in targets.items():
                 CONTROL_STATE["sliders"][key] = val
+
+            update_adjusting_state_for_reading(reading, targets)
+            socketio.emit("sensor_update", reading)
 
             secondary_temp = reading.get("mixing_temperature")
             if secondary_temp is None:

@@ -34,6 +34,38 @@ IS_SYSTEM_START = {
     "temperature": True,
     "dissolved_oxygen": True,
 }
+SETPOINT_ADJUSTING = {
+    "temperature": True,
+    "dissolved_oxygen": True,
+}
+
+
+def update_adjusting_state_for_reading(reading, targets=None):
+    """
+    Updates server-side SETPOINT_ADJUSTING flags once a sensor reading reaches
+    within the accepted optimal band of its setpoint (< 1.0°C for temperature,
+    < 0.5 mg/L for dissolved oxygen).
+    """
+    if not reading:
+        return
+    if targets is None:
+        targets = get_control_settings()
+    for metric, slider_key, warning_limit in (
+        ("temperature", "temperature_setpoint", 1.0),
+        ("dissolved_oxygen", "dissolved_oxygen_setpoint", 0.5),
+    ):
+        if not SETPOINT_ADJUSTING.get(metric):
+            continue
+        val = reading.get(metric)
+        target = targets.get(slider_key)
+        if val is None or target is None:
+            continue
+        try:
+            if abs(float(val) - float(target)) < warning_limit:
+                SETPOINT_ADJUSTING[metric] = False
+                IS_SYSTEM_START[metric] = False
+        except (TypeError, ValueError):
+            pass
 
 CONTROL_STATE = {
     "valves": {
@@ -193,6 +225,7 @@ def get_controls():
         "sliders": db_sliders,
         "setpoint_times": SETPOINT_UPDATED_AT,
         "is_system_start": IS_SYSTEM_START,
+        "adjusting_state": SETPOINT_ADJUSTING,
         "server_time": int(time.time() * 1000),
     })
 
@@ -229,12 +262,29 @@ def set_sliders():
         if prev_ht < min_ht or prev_ht > HEATING_TANK_MAX_SETPOINT:
             updates["heating_tank_setpoint"] = max(min_ht, min(HEATING_TANK_MAX_SETPOINT, prev_ht))
 
+    latest_reading = get_latest_reading()
     if "temperature_setpoint" in updates:
-        SETPOINT_UPDATED_AT["temperature"] = now_ms
-        IS_SYSTEM_START["temperature"] = False
+        prev_temp = prev_sliders.get("temperature_setpoint")
+        if prev_temp is None or float(prev_temp) != updates["temperature_setpoint"]:
+            SETPOINT_UPDATED_AT["temperature"] = now_ms
+            IS_SYSTEM_START["temperature"] = False
+            if latest_reading and latest_reading.get("temperature") is not None:
+                SETPOINT_ADJUSTING["temperature"] = (
+                    abs(float(latest_reading["temperature"]) - updates["temperature_setpoint"]) >= 1.0
+                )
+            else:
+                SETPOINT_ADJUSTING["temperature"] = True
     if "dissolved_oxygen_setpoint" in updates:
-        SETPOINT_UPDATED_AT["dissolved_oxygen"] = now_ms
-        IS_SYSTEM_START["dissolved_oxygen"] = False
+        prev_do = prev_sliders.get("dissolved_oxygen_setpoint")
+        if prev_do is None or float(prev_do) != updates["dissolved_oxygen_setpoint"]:
+            SETPOINT_UPDATED_AT["dissolved_oxygen"] = now_ms
+            IS_SYSTEM_START["dissolved_oxygen"] = False
+            if latest_reading and latest_reading.get("dissolved_oxygen") is not None:
+                SETPOINT_ADJUSTING["dissolved_oxygen"] = (
+                    abs(float(latest_reading["dissolved_oxygen"]) - updates["dissolved_oxygen_setpoint"]) >= 0.5
+                )
+            else:
+                SETPOINT_ADJUSTING["dissolved_oxygen"] = True
             
     if updates:
         db_sliders = update_control_settings(updates)
@@ -262,6 +312,7 @@ def set_sliders():
                 "valves": CONTROL_STATE["valves"],
                 "setpoint_times": SETPOINT_UPDATED_AT,
                 "is_system_start": IS_SYSTEM_START,
+                "adjusting_state": SETPOINT_ADJUSTING,
                 "server_time": int(time.time() * 1000),
             })
     except Exception:
@@ -271,6 +322,7 @@ def set_sliders():
         "sliders": db_sliders,
         "setpoint_times": SETPOINT_UPDATED_AT,
         "is_system_start": IS_SYSTEM_START,
+        "adjusting_state": SETPOINT_ADJUSTING,
         "server_time": int(time.time() * 1000),
     })
 
