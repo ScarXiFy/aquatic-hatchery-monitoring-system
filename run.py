@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -68,27 +69,42 @@ def find_browser_binary():
     return None
 
 
+def get_browser_profile_dir():
+    """
+    Returns a dedicated Chromium/Chrome user-data-dir so launching the
+    dashboard starts its own browser instance and honors --start-fullscreen
+    or --kiosk even when Chrome/Chromium is already running.
+    """
+    custom_dir = os.environ.get("BROWSER_PROFILE_DIR")
+    if custom_dir:
+        return custom_dir
+    uid = os.getuid() if hasattr(os, "getuid") else "user"
+    return os.path.join(tempfile.gettempdir(), f"hatchery-dashboard-profile-{uid}")
+
+
 def open_browser(url="http://localhost:5050", client_timeout=2.0):
     """
-    Automatically opens the dashboard URL in maximized/fullscreen mode on the display.
+    Automatically opens the dashboard URL in fullscreen mode on the local display.
     Configures environment variables (DISPLAY, WAYLAND_DISPLAY, XDG_RUNTIME_DIR)
     so the browser opens properly whether executed directly from desktop,
     SSH, or a startup service.
 
-    If the website is already open in a browser tab (e.g. from before the program
-    was stopped with Ctrl+C), it reuses the open tab instead of launching a new one.
+    If the website is already open in a local browser tab on this machine (e.g.
+    from before the program was stopped with Ctrl+C), it reuses the open tab
+    instead of launching a new one. Remote clients connected over the LAN are
+    ignored so the Raspberry Pi display still launches automatically.
     """
     # Wait until the web server is ready to accept requests
     if not wait_for_server(url, timeout=15):
         print(f"[BROWSER] Server at {url} did not become responsive in time.")
         return
 
-    # Check if a client tab is already open (or reconnects within client_timeout)
+    # Check if a local client tab is already open on this machine (ignoring LAN clients)
     force_new = "--new-tab" in sys.argv or "--force-browser" in sys.argv
     if not force_new:
         timeout = float(os.environ.get("BROWSER_CLIENT_TIMEOUT", str(client_timeout)))
-        if wait_for_client_connection(timeout=timeout):
-            print(f"[BROWSER] Existing web app tab detected for {url}. Reusing already open tab.")
+        if wait_for_client_connection(timeout=timeout, local_only=True):
+            print(f"[BROWSER] Existing local web app tab detected for {url}. Reusing already open tab.")
             return
 
     # Set up display environment variables for GUI on the display
@@ -111,13 +127,17 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
 
     kiosk_mode = "--kiosk" in sys.argv or os.environ.get("KIOSK", "0").lower() in ("1", "true")
 
-    # Prefer Chromium / Chrome across platforms for maximized/fullscreen support
+    # Prefer Chromium / Chrome across platforms for fullscreen support
     browser_bin = find_browser_binary()
     if browser_bin:
+        profile_dir = get_browser_profile_dir()
         cmd = [
             browser_bin,
+            f"--user-data-dir={profile_dir}",
             "--no-first-run",
+            "--no-default-browser-check",
             "--disable-restore-session-state",
+            "--disable-session-crashed-bubble",
             "--disable-infobars",
         ]
         # Chromium requires --no-sandbox if run as root (e.g. sudo python run.py)
@@ -127,13 +147,13 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
         if kiosk_mode:
             cmd.append("--kiosk")
         else:
-            cmd.append("--start-maximized")
+            cmd.append("--new-window")
             cmd.append("--start-fullscreen")
 
         cmd.append(url)
 
         try:
-            print(f"[BROWSER] Launching {url} in maximized/fullscreen mode with {os.path.basename(browser_bin)}...")
+            print(f"[BROWSER] Launching {url} in fullscreen mode with {os.path.basename(browser_bin)}...")
             subprocess.Popen(
                 cmd,
                 env=env,

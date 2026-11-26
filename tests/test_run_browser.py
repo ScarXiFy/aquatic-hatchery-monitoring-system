@@ -63,8 +63,11 @@ class TestRunBrowser(unittest.TestCase):
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         self.assertEqual(cmd[0], "/usr/bin/chromium-browser")
-        self.assertIn("--start-maximized", cmd)
+        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
+        self.assertIn("--no-default-browser-check", cmd)
+        self.assertIn("--new-window", cmd)
         self.assertIn("--start-fullscreen", cmd)
+        self.assertNotIn("--start-maximized", cmd)
         self.assertIn("http://localhost:5050", cmd)
         self.assertTrue(mock_popen.call_args[1].get("start_new_session"))
 
@@ -79,6 +82,7 @@ class TestRunBrowser(unittest.TestCase):
 
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
+        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
         self.assertIn("--kiosk", cmd)
         self.assertNotIn("--start-maximized", cmd)
         self.assertNotIn("--start-fullscreen", cmd)
@@ -115,8 +119,10 @@ class TestRunBrowser(unittest.TestCase):
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         self.assertEqual(cmd[0], "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        self.assertIn("--start-maximized", cmd)
+        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
+        self.assertIn("--new-window", cmd)
         self.assertIn("--start-fullscreen", cmd)
+        self.assertNotIn("--start-maximized", cmd)
         self.assertIn("http://localhost:5050", cmd)
 
     @patch("run.threading.Thread")
@@ -153,8 +159,8 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.subprocess.Popen")
     @patch("run.webbrowser.open")
     def test_open_browser_skips_when_existing_client_already_open(self, mock_webbrowser_open, mock_popen, mock_wait):
-        """If a tab is already open from before Ctrl+C, it should not open a new tab."""
-        notify_client_connected()
+        """If a local tab is already open from before Ctrl+C, it should not open a new tab."""
+        notify_client_connected(remote_addr="127.0.0.1")
 
         run.open_browser("http://localhost:5050")
 
@@ -162,11 +168,27 @@ class TestRunBrowser(unittest.TestCase):
         mock_webbrowser_open.assert_not_called()
 
     @patch("run.wait_for_server", return_value=True)
+    @patch("run.shutil.which", return_value="/usr/bin/chromium-browser")
+    @patch("run.sys.platform", "linux")
+    @patch("run.subprocess.Popen")
+    def test_open_browser_launches_when_only_lan_client_connected(self, mock_popen, mock_which, mock_wait):
+        """A separate device on the LAN should not prevent the RPi from launching locally."""
+        notify_client_connected(remote_addr="192.168.1.42")
+
+        with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
+            run.open_browser("http://localhost:5050")
+
+        mock_popen.assert_called_once()
+        cmd = mock_popen.call_args[0][0]
+        self.assertIn("--start-fullscreen", cmd)
+        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
+
+    @patch("run.wait_for_server", return_value=True)
     @patch("run.find_browser_binary", return_value=None)
     @patch("run.webbrowser.open")
     def test_open_browser_force_new_tab_flag_bypasses_existing_check(self, mock_webbrowser_open, mock_find, mock_wait):
-        """Passing --new-tab opens browser even if an existing client tab is connected."""
-        notify_client_connected()
+        """Passing --new-tab opens browser even if an existing local client tab is connected."""
+        notify_client_connected(remote_addr="127.0.0.1")
         sys.argv.append("--new-tab")
 
         with patch.dict(os.environ, {"DISPLAY": ":0"}, clear=True):

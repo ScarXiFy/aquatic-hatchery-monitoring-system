@@ -43,6 +43,6 @@ def create_app(config_class=Config):
         if "python-urllib" in user_agent:
             return
         if "mozilla" in user_agent or request.path.startswith("/socket.io"):
-            notify_client_connected()
+            notify_client_connected(remote_addr=request.remote_addr)
 
     return app
