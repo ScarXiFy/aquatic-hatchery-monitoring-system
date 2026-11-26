@@ -54,8 +54,9 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.wait_for_server", return_value=True)
     @patch("run.shutil.which", return_value="/usr/bin/chromium-browser")
     @patch("run.sys.platform", "linux")
+    @patch("run.tempfile.mkdtemp", return_value="/tmp/hatchery-dashboard-profile-1000-test")
     @patch("run.subprocess.Popen")
-    def test_open_browser_chromium_on_linux(self, mock_popen, mock_which, mock_wait):
+    def test_open_browser_chromium_on_linux(self, mock_popen, mock_mkdtemp, mock_which, mock_wait):
         with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
@@ -63,36 +64,37 @@ class TestRunBrowser(unittest.TestCase):
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         self.assertEqual(cmd[0], "/usr/bin/chromium-browser")
-        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
+        self.assertIn("--user-data-dir=/tmp/hatchery-dashboard-profile-1000-test", cmd)
         self.assertIn("--no-default-browser-check", cmd)
-        self.assertIn("--new-window", cmd)
-        self.assertIn("--start-fullscreen", cmd)
+        self.assertIn("--kiosk", cmd)
         self.assertNotIn("--start-maximized", cmd)
+        self.assertNotIn("--start-fullscreen", cmd)
         self.assertIn("http://localhost:5050", cmd)
         self.assertTrue(mock_popen.call_args[1].get("start_new_session"))
 
     @patch("run.wait_for_server", return_value=True)
     @patch("run.shutil.which", return_value="/usr/bin/chromium")
     @patch("run.sys.platform", "linux")
+    @patch("run.tempfile.mkdtemp", return_value="/tmp/hatchery-dashboard-profile-1000-test")
     @patch("run.subprocess.Popen")
-    def test_open_browser_kiosk_mode(self, mock_popen, mock_which, mock_wait):
-        sys.argv.append("--kiosk")
+    def test_open_browser_windowed_mode(self, mock_popen, mock_mkdtemp, mock_which, mock_wait):
+        sys.argv.append("--windowed")
         with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
-        self.assertIn("--kiosk", cmd)
-        self.assertNotIn("--start-maximized", cmd)
-        self.assertNotIn("--start-fullscreen", cmd)
+        self.assertIn("--start-maximized", cmd)
+        self.assertNotIn("--kiosk", cmd)
 
     @patch("run.wait_for_server", return_value=True)
     @patch("run.shutil.which", return_value="/usr/bin/chromium-browser")
     @patch("run.sys.platform", "linux")
     @patch("run.os.geteuid", return_value=0)
+    @patch("run.tempfile.mkdtemp", return_value="/tmp/hatchery-dashboard-profile-0-test")
     @patch("run.subprocess.Popen")
-    def test_open_browser_root_adds_no_sandbox(self, mock_popen, mock_geteuid, mock_which, mock_wait):
+    def test_open_browser_root_adds_no_sandbox(self, mock_popen, mock_mkdtemp, mock_geteuid, mock_which, mock_wait):
         with patch.dict(os.environ, {"DISPLAY": ":0", "BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
@@ -111,17 +113,17 @@ class TestRunBrowser(unittest.TestCase):
 
     @patch("run.wait_for_server", return_value=True)
     @patch("run.find_browser_binary", return_value="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    @patch("run.tempfile.mkdtemp", return_value="/tmp/hatchery-dashboard-profile-501-test")
     @patch("run.subprocess.Popen")
-    def test_open_browser_maximized_fullscreen_chrome(self, mock_popen, mock_find, mock_wait):
+    def test_open_browser_fullscreen_kiosk_chrome(self, mock_popen, mock_mkdtemp, mock_find, mock_wait):
         with patch.dict(os.environ, {"BROWSER_CLIENT_TIMEOUT": "0"}, clear=True):
             run.open_browser("http://localhost:5050")
 
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
         self.assertEqual(cmd[0], "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
-        self.assertIn("--new-window", cmd)
-        self.assertIn("--start-fullscreen", cmd)
+        self.assertIn("--user-data-dir=/tmp/hatchery-dashboard-profile-501-test", cmd)
+        self.assertIn("--kiosk", cmd)
         self.assertNotIn("--start-maximized", cmd)
         self.assertIn("http://localhost:5050", cmd)
 
@@ -170,8 +172,9 @@ class TestRunBrowser(unittest.TestCase):
     @patch("run.wait_for_server", return_value=True)
     @patch("run.shutil.which", return_value="/usr/bin/chromium-browser")
     @patch("run.sys.platform", "linux")
+    @patch("run.tempfile.mkdtemp", return_value="/tmp/hatchery-dashboard-profile-1000-test")
     @patch("run.subprocess.Popen")
-    def test_open_browser_launches_when_only_lan_client_connected(self, mock_popen, mock_which, mock_wait):
+    def test_open_browser_launches_when_only_lan_client_connected(self, mock_popen, mock_mkdtemp, mock_which, mock_wait):
         """A separate device on the LAN should not prevent the RPi from launching locally."""
         notify_client_connected(remote_addr="192.168.1.42")
 
@@ -180,7 +183,7 @@ class TestRunBrowser(unittest.TestCase):
 
         mock_popen.assert_called_once()
         cmd = mock_popen.call_args[0][0]
-        self.assertIn("--start-fullscreen", cmd)
+        self.assertIn("--kiosk", cmd)
         self.assertTrue(any(arg.startswith("--user-data-dir=") for arg in cmd))
 
     @patch("run.wait_for_server", return_value=True)

@@ -71,15 +71,16 @@ def find_browser_binary():
 
 def get_browser_profile_dir():
     """
-    Returns a dedicated Chromium/Chrome user-data-dir so launching the
-    dashboard starts its own browser instance and honors --start-fullscreen
-    or --kiosk even when Chrome/Chromium is already running.
+    Returns a fresh dedicated Chromium/Chrome user-data-dir so launching the
+    dashboard always starts an isolated browser process and honors --kiosk
+    fullscreen even when Chrome/Chromium (or a previous dashboard process) is
+    already running.
     """
     custom_dir = os.environ.get("BROWSER_PROFILE_DIR")
     if custom_dir:
         return custom_dir
     uid = os.getuid() if hasattr(os, "getuid") else "user"
-    return os.path.join(tempfile.gettempdir(), f"hatchery-dashboard-profile-{uid}")
+    return tempfile.mkdtemp(prefix=f"hatchery-dashboard-profile-{uid}-")
 
 
 def open_browser(url="http://localhost:5050", client_timeout=2.0):
@@ -125,9 +126,14 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
                     os.environ.setdefault("WAYLAND_DISPLAY", "wayland-0")
                 break
 
-    kiosk_mode = "--kiosk" in sys.argv or os.environ.get("KIOSK", "0").lower() in ("1", "true")
+    windowed_mode = (
+        "--windowed" in sys.argv
+        or os.environ.get("WINDOWED", "0").lower() in ("1", "true")
+        or os.environ.get("KIOSK", "").lower() in ("0", "false")
+    )
+    kiosk_mode = not windowed_mode
 
-    # Prefer Chromium / Chrome across platforms for fullscreen support
+    # Prefer Chromium / Chrome across platforms for reliable fullscreen support
     browser_bin = find_browser_binary()
     if browser_bin:
         profile_dir = get_browser_profile_dir()
@@ -147,13 +153,13 @@ def open_browser(url="http://localhost:5050", client_timeout=2.0):
         if kiosk_mode:
             cmd.append("--kiosk")
         else:
-            cmd.append("--new-window")
-            cmd.append("--start-fullscreen")
+            cmd.append("--start-maximized")
 
         cmd.append(url)
 
         try:
-            print(f"[BROWSER] Launching {url} in fullscreen mode with {os.path.basename(browser_bin)}...")
+            mode_label = "fullscreen kiosk" if kiosk_mode else "windowed"
+            print(f"[BROWSER] Launching {url} in {mode_label} mode with {os.path.basename(browser_bin)}...")
             subprocess.Popen(
                 cmd,
                 env=env,
